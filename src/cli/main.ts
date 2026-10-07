@@ -4,7 +4,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, extname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import type { PublicConfig } from '../shared/types.js';
 import { okfToArticleFields, parseOkfDocument } from '../shared/okf.js';
@@ -70,7 +70,7 @@ type Flags = Record<string, string | boolean>;
 function parseArgs(argv: string[]): { cmd: string; args: string[]; flags: Flags } {
   const flags: Flags = {};
   const args: string[] = [];
-  const booleans = new Set(['json', 'mine', 'no-browser', 'tags', 'raw', 'help', 'default']);
+  const booleans = new Set(['json', 'mine', 'no-browser', 'tags', 'raw', 'help', 'default', 'force']);
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
     if (a === '--') {
@@ -410,6 +410,60 @@ async function cmdHistory(env: string, id: string, flags: Flags) {
   table([['VER', 'UPDATED', 'BY', 'VIA', 'ACTION', 'TITLE'], ...r.items.map((h: any) => [String(h.version), h.updatedAt.slice(0, 16).replace('T', ' '), h.updatedBy, h.via, h.action, h.title])]);
 }
 
+// ------------------------------------------------------------------ attachments
+
+const ATTACH_TYPES: Record<string, { type: string; magic: (b: Buffer) => boolean }> = {
+  '.png': { type: 'image/png', magic: (b) => b.subarray(0, 4).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47])) },
+  '.jpg': { type: 'image/jpeg', magic: (b) => b[0] === 0xff && b[1] === 0xd8 },
+  '.jpeg': { type: 'image/jpeg', magic: (b) => b[0] === 0xff && b[1] === 0xd8 },
+  '.gif': { type: 'image/gif', magic: (b) => b.subarray(0, 4).toString('latin1') === 'GIF8' },
+  '.webp': { type: 'image/webp', magic: (b) => b.subarray(8, 12).toString('latin1') === 'WEBP' },
+  '.pdf': { type: 'application/pdf', magic: (b) => b.subarray(0, 5).toString('latin1') === '%PDF-' },
+};
+
+async function cmdAttach(env: string, id: string, file: string, flags: Flags) {
+  if (!id || !file) throw new CliError('usage: mcpwiki attach <article-id> <file> [--name display-name]');
+  const kind = ATTACH_TYPES[extname(file).toLowerCase()];
+  if (!kind) throw new CliError(`unsupported file type; allowed: ${Object.keys(ATTACH_TYPES).join(' ')}`);
+  const data = readFileSync(file);
+  if (!kind.magic(data)) throw new CliError(`${file} does not look like ${kind.type}`);
+  const name = typeof flags.name === 'string' ? flags.name : basename(file);
+  const req = await apiJson(env, 'POST', `/api/articles/${encodeURIComponent(id)}/attachments`, { name, contentType: kind.type, size: data.length });
+  const form = new FormData();
+  for (const [k, v] of Object.entries(req.upload.fields as Record<string, string>)) form.append(k, v);
+  form.append('file', new Blob([data], { type: kind.type }), name); // must be the last field
+  const up = await fetch(req.upload.url, { method: 'POST', body: form, signal: AbortSignal.timeout(120_000) });
+  if (!up.ok) throw new CliError(`upload failed: HTTP ${up.status}`);
+  const done = await apiJson(env, 'POST', `/api/articles/${encodeURIComponent(id)}/attachments/${req.fileId}/complete`);
+  if (flags.json) return printJson(done);
+  out(`attached ${done.name} (${done.size} bytes)\n${done.markdown}`);
+}
+
+async function cmdAttachments(env: string, id: string, flags: Flags) {
+  if (!id) throw new CliError('usage: mcpwiki attachments <article-id>');
+  const r = await apiJson(env, 'GET', `/api/articles/${encodeURIComponent(id)}/attachments`);
+  if (flags.json) return printJson(r.items);
+  if (!r.items.length) return out('(no attachments)');
+  table([['FILE ID', 'SIZE', 'TYPE', 'NAME'], ...r.items.map((f: any) => [f.fileId, String(f.size), f.contentType, f.name])]);
+}
+
+async function cmdDownload(env: string, id: string, fileId: string, flags: Flags) {
+  if (!id || !fileId) throw new CliError('usage: mcpwiki download <article-id> <file-id> [--out path] [--force]');
+  const r = await apiJson(env, 'GET', `/api/articles/${encodeURIComponent(id)}/attachments/${encodeURIComponent(fileId)}/url`);
+  // Never trust the server-provided name as a path: keep only a safe base name.
+  const target = typeof flags.out === 'string' ? flags.out : basename(String(r.name)).replace(/[^\p{L}\p{N}._ -]+/gu, '_').replace(/^\.+/, '_') || fileId;
+  const res = await fetch(r.url, { signal: AbortSignal.timeout(120_000) });
+  if (!res.ok) throw new CliError(`download failed: HTTP ${res.status}`);
+  try {
+    // "wx": create atomically, fail if the path exists (no check-then-write race, no following a planted file).
+    writeFileSync(target, Buffer.from(await res.arrayBuffer()), { flag: flags.force ? 'w' : 'wx' });
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'EEXIST') throw new CliError(`${target} exists (use --force to overwrite)`);
+    throw e;
+  }
+  out(`wrote ${target}`);
+}
+
 async function cmdExport(env: string, flags: Flags) {
   const file = typeof flags.out === 'string' ? flags.out : `mcpwiki-${env}-okf.zip`;
   const r = await api(env, 'GET', '/api/export', undefined, 'application/zip');
@@ -500,6 +554,11 @@ Articles
   graph [id] [--depth 1-3] [--tags]
   export [--out file.zip]                 OKF bundle of all articles you can read
 
+Attachments (PNG / JPEG / GIF / WebP / PDF, up to 10 MB; access follows the article)
+  attach <id> <file> [--name n]           upload; prints the Markdown snippet to paste into the article
+  attachments <id>                        list
+  download <id> <file-id> [--out path] [--force]
+
 MCP
   mcp                                     stdio MCP server (bridges to the remote /mcp endpoint)
                                           e.g. claude mcp add mcpwiki -- mcpwiki mcp --env dev
@@ -555,6 +614,12 @@ async function main() {
       return cmdBacklinks(env, args[0]!, flags);
     case 'history':
       return cmdHistory(env, args[0]!, flags);
+    case 'attach':
+      return cmdAttach(env, args[0]!, args[1]!, flags);
+    case 'attachments':
+      return cmdAttachments(env, args[0]!, flags);
+    case 'download':
+      return cmdDownload(env, args[0]!, args[1]!, flags);
     case 'export':
       return cmdExport(env, flags);
     case 'mcp':

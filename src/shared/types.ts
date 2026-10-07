@@ -152,3 +152,17 @@ export interface PublicConfig {
   cliRedirectUri: string;
   issuer: string;
 }
+
+/** File attached to an article. Access follows the article's read/write scopes. */
+export interface Attachment {
+  articleId: string;
+  fileId: string;
+  name: string;
+  contentType: string;
+  size: number;
+  status: 'pending' | 'ready' | 'rejected';
+  uploadedBy: string; // username
+  uploadedBySub: string;
+  uploadedAt: string;
+  deleted?: boolean;
+}

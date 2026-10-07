@@ -8,6 +8,7 @@ import { handleCallback, isSignedIn, loadConfig, login, logout } from './auth.js
 import { append, clear, fmtDate, h } from './dom.js';
 import { renderGraph } from './graph.js';
 import { renderMarkdown } from './markdown.js';
+import { ACCEPT, deleteAttachment, FILE_PATH_RE, formatSize, hydrateAttachments, listAttachments, openAttachment, uploadAttachment, type AttachmentInfo } from './attachments.js';
 
 interface Me {
   username: string;
@@ -88,6 +89,7 @@ async function render() {
     else if ((m = /^\/wiki\/([a-z0-9-]+)\/history$/.exec(path))) view = await historyView(m[1]!);
     else if ((m = /^\/wiki\/([a-z0-9-]+)\/history\/(\d+)$/.exec(path))) view = await articleView(m[1]!, Number(m[2]));
     else if ((m = /^\/wiki\/([a-z0-9-]+)\/graph$/.exec(path))) view = await graphView(m[1]!);
+    else if (FILE_PATH_RE.test(path)) view = await attachmentView(path);
     else if (path === '/admin' || path.startsWith('/admin/')) view = await adminView(path);
     else view = h('div', null, h('h1', null, '404'), h('p', null, 'ページが見つかりません。'));
     clear(el);
@@ -153,6 +155,13 @@ async function tagsView() {
   return h('div', null, h('h1', null, 'タグ一覧'), h('div', { class: 'tagcloud' }, ...r.items.map((t) => link(`/tags/${encodeURIComponent(t.tag)}`, h('span', { class: 'tag' }, `${t.tag} (${t.count})`)))));
 }
 
+/** Sanitized Markdown with attachment images/links wired up (before it is inserted into the page). */
+function markdown(md: string): DocumentFragment {
+  const frag = renderMarkdown(md);
+  hydrateAttachments(frag);
+  return frag;
+}
+
 async function articleView(id: string, version: number | undefined) {
   const a = await api<any>('GET', `/api/articles/${id}${version ? `?version=${version}` : ''}`);
   const isOld = version !== undefined;
@@ -216,9 +225,50 @@ async function articleView(id: string, version: number | undefined) {
     ),
     a.description ? h('p', { class: 'description' }, a.description) : null,
     actions,
-    h('div', { class: 'markdown-body' }, renderMarkdown(a.body)),
+    h('div', { class: 'markdown-body' }, markdown(a.body)),
+    isOld ? null : await attachmentsSection(id, a.canEdit),
     backlinks.items.length ? h('section', { class: 'backlinks' }, h('h2', null, 'この記事へのリンク'), h('ul', null, ...backlinks.items.map((b) => h('li', null, link(`/wiki/${b.id}`, b.title))))) : null,
   );
+}
+
+async function attachmentsSection(id: string, canEdit: boolean) {
+  const { items } = await listAttachments(id);
+  if (!items.length) return null;
+  const rows = items.map((f: AttachmentInfo) =>
+    h(
+      'li',
+      null,
+      h('a', { href: f.path, onclick: (ev: Event) => (ev.preventDefault(), void openAttachment(f.path).catch((e) => alert(String(e)))) }, f.name),
+      h('span', { class: 'muted' }, ` ${formatSize(f.size)} ・ ${f.uploadedBy} ・ ${fmtDate(f.uploadedAt)} `),
+      h('code', { class: 'snippet-md' }, f.markdown),
+      canEdit && me.role !== 'viewer'
+        ? h('button', {
+            class: 'danger small',
+            onclick: async () => {
+              if (!confirm(`添付「${f.name}」を削除しますか？`)) return;
+              try {
+                await deleteAttachment(id, f.fileId);
+                void render();
+              } catch (e) {
+                alert(e instanceof Error ? e.message : String(e));
+              }
+            },
+          }, '削除')
+        : null,
+    ),
+  );
+  return h('section', { class: 'attachments' }, h('h2', null, `添付ファイル (${items.length})`), h('ul', null, ...rows));
+}
+
+async function attachmentView(path: string) {
+  // Direct link to an attachment: open/download it, then show the article.
+  const m = FILE_PATH_RE.exec(path)!;
+  try {
+    await openAttachment(path);
+  } catch (e) {
+    return h('div', null, errorBox(e), link(`/wiki/${m[1]}`, '記事へ戻る'));
+  }
+  return h('div', null, h('p', null, 'ファイルを開きました。'), link(`/wiki/${m[1]}`, '記事へ戻る'));
 }
 
 async function downloadOkf(id: string) {
@@ -287,8 +337,48 @@ function editorView(a: any | null) {
   let timer: number | undefined;
   const updatePreview = () => {
     clear(preview);
-    preview.appendChild(renderMarkdown(body.value));
+    preview.appendChild(markdown(body.value));
   };
+  // Attachments: file picker, drag & drop and paste insert a Markdown snippet at the cursor.
+  const insertAtCursor = (text: string) => {
+    const at = body.selectionStart ?? body.value.length;
+    const before = body.value.slice(0, at);
+    body.value = before + (before && !before.endsWith('\n') ? '\n' : '') + text + '\n' + body.value.slice(body.selectionEnd ?? at);
+    updatePreview();
+  };
+  const uploadStatus = h('span', { class: 'muted', role: 'status' });
+  const uploadFiles = async (files: Iterable<File>) => {
+    if (!a) return;
+    for (const f of files) {
+      uploadStatus.textContent = `アップロード中: ${f.name}`;
+      try {
+        insertAtCursor((await uploadAttachment(a.id, f)).markdown);
+        uploadStatus.textContent = `添付しました: ${f.name}`;
+      } catch (e) {
+        uploadStatus.textContent = `${f.name}: ${e instanceof Error ? e.message : String(e)}`;
+      }
+    }
+  };
+  const picker = h('input', { type: 'file', accept: ACCEPT, multiple: true, 'aria-label': 'ファイルを添付' });
+  picker.addEventListener('change', () => void uploadFiles(Array.from(picker.files ?? [])).then(() => (picker.value = '')));
+  body.addEventListener('dragover', (ev) => {
+    if (a && (ev as DragEvent).dataTransfer?.types.includes('Files')) ev.preventDefault();
+  });
+  body.addEventListener('drop', (ev) => {
+    const files = (ev as DragEvent).dataTransfer?.files;
+    if (!a || !files?.length) return;
+    ev.preventDefault();
+    void uploadFiles(Array.from(files));
+  });
+  body.addEventListener('paste', (ev) => {
+    const files = Array.from((ev as ClipboardEvent).clipboardData?.files ?? []);
+    if (!a || !files.length) return;
+    ev.preventDefault();
+    void uploadFiles(files);
+  });
+  const attachBar = a
+    ? h('div', { class: 'attach-bar' }, h('label', { class: 'button secondary' }, '画像・PDF を添付', picker), ' ', uploadStatus, h('span', { class: 'muted' }, ' （ドラッグ＆ドロップや貼り付けでも添付できます。PNG / JPEG / GIF / WebP / PDF、10MB まで）'))
+    : h('p', { class: 'muted' }, 'ファイルの添付は、記事を作成（保存）したあとで行えます。');
   body.addEventListener('input', () => {
     clearTimeout(timer);
     timer = window.setTimeout(updatePreview, 250);
@@ -344,6 +434,7 @@ function editorView(a: any | null) {
       h('label', null, '編集', writeScope),
     ),
     h('p', { class: 'muted' }, '他の記事へのリンク: [表示名](/wiki/記事ID)'),
+    attachBar,
     h('div', { class: 'split' }, body, preview),
     status_,
     h('div', { class: 'actions' }, save, link(a ? `/wiki/${a.id}` : '/', h('span', { class: 'button secondary' }, 'キャンセル'))),

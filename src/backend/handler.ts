@@ -4,7 +4,8 @@ import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-sec
 import { GetParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
 import { TokenVerifier, type Jwk } from './auth.js';
 import { createApp, type Req, type Res } from './app.js';
-import { DynamoStore } from './dynamo-store.js';
+import { AttachmentService } from './attachments.js';
+import { DynamoStore, S3Blobs } from './dynamo-store.js';
 import { WikiService } from './service.js';
 import { CognitoUserDirectory } from './users.js';
 
@@ -76,10 +77,12 @@ async function getApp() {
       return (await r.json()) as { keys: Jwk[] };
     },
   });
+  const service = new WikiService(store, new CognitoUserDirectory(poolId, region), undefined, {
+    cursorKey: createHash('sha256').update(`mcpwiki-cursor|${secret}`).digest(),
+  });
   app = createApp({
-    service: new WikiService(store, new CognitoUserDirectory(poolId, region), undefined, {
-      cursorKey: createHash('sha256').update(`mcpwiki-cursor|${secret}`).digest(),
-    }),
+    service,
+    attachments: new AttachmentService(store, new S3Blobs(env('BUCKET_NAME'), region), service),
     verifier,
     store,
     publicUrl: cfg.publicUrl,

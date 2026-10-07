@@ -11,7 +11,7 @@ test('initialize, ping, tools/list (no delete tool)', async () => {
   assert.equal(unknownVer.result.protocolVersion, '2025-11-25');
   assert.deepEqual((await mcp(users.alice, 'ping')).result, {});
   const names = (await mcp(users.alice, 'tools/list')).result.tools.map((t: any) => t.name);
-  assert.deepEqual(names, ['list_articles', 'get_article', 'search_articles', 'create_article', 'update_article', 'list_tags', 'get_graph', 'get_backlinks']);
+  assert.deepEqual(names, ['list_articles', 'get_article', 'search_articles', 'create_article', 'update_article', 'list_tags', 'get_graph', 'list_attachments', 'get_attachment', 'get_backlinks']);
   assert.ok(!names.some((n: string) => /delete|remove/.test(n)));
   assert.equal((await mcp(users.alice, 'nope')).error.code, -32601);
   // notification -> 202, GET -> 405, batch -> 400, bad origin -> 403, no auth -> 401
