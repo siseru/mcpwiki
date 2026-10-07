@@ -134,7 +134,7 @@ Operations on dev's own resources are allowed.
 
 | Layer | Mechanism |
 |---|---|
-| Code | CodeQL (security-extended); custom lint for XSS sinks, token storage, the dependency allowlist, no deletion via MCP/CLI, and no secrets in logs; security regression tests (`test/security.test.ts`) |
+| Code | CodeQL (security-extended; only the two file↔HTTP rules that describe the CLI's intended behavior are excluded, with reasons, in `.github/codeql/codeql-config.yml`); custom lint for XSS sinks, token storage, the dependency allowlist, no deletion via MCP/CLI, and no secrets in logs; security regression tests (`test/security.test.ts`) |
 | Dependencies | `npm audit` (runtime), `npm audit signatures`, Dependency Review (PRs), Dependabot (npm and Actions) |
 | Secrets | gitleaks over the full history; GitHub secret scanning with push protection |
 | IaC | cdk-nag AwsSolutions (every acknowledgement has a reason); checkov on the synthesized templates (every skip in `.checkov.yaml` has a reason) |

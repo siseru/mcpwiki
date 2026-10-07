@@ -15,10 +15,11 @@ export function h<K extends keyof HTMLElementTagNameMap>(tag: K, attrs?: Attrs |
   return el;
 }
 
-export function append(el: Node, children: (Child | Child[])[]): void {
+export function append(el: ParentNode, children: (Child | Child[])[]): void {
   for (const c of children.flat()) {
     if (c === null || c === undefined || c === false) continue;
-    el.appendChild(typeof c === 'string' || typeof c === 'number' ? document.createTextNode(String(c)) : c);
+    // ParentNode.append() inserts strings as Text nodes: never parsed as markup.
+    el.append(c instanceof Node ? c : String(c));
   }
 }
 

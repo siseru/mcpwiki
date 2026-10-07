@@ -8,6 +8,7 @@ interface Tokens {
   expiresAt: number;
 }
 
+const OAUTH_ERRORS = new Set(['invalid_request', 'unauthorized_client', 'access_denied', 'unsupported_response_type', 'invalid_scope', 'server_error', 'temporarily_unavailable', 'invalid_grant']);
 const KEY = 'mcpwiki.tokens';
 const PKCE = 'mcpwiki.pkce';
 let cfg: PublicConfig;
@@ -81,7 +82,8 @@ export async function handleCallback(): Promise<string | null> {
   sessionStorage.removeItem(PKCE);
   if (!pkce || q.get('state') !== pkce.state) throw new Error('login state mismatch; please try again');
   const err = q.get('error');
-  if (err) throw new Error(`login failed: ${err}`);
+  // Never echo URL content back to the user (it is attacker-controllable); map to known OAuth codes.
+  if (err) throw new Error(`login failed: ${OAUTH_ERRORS.has(err) ? err : 'unknown_error'}`);
   const code = q.get('code');
   if (!code) throw new Error('missing authorization code');
   save(await tokenRequest({ grant_type: 'authorization_code', code, redirect_uri: redirectUri(), code_verifier: pkce.verifier }));

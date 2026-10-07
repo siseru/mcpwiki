@@ -1,0 +1,18 @@
+# CodeQL configuration (used by .github/workflows/codeql.yml).
+name: mcpwiki
+queries:
+  - uses: security-extended
+paths-ignore:
+  - dist
+  - build
+  - cdk.out
+  - node_modules
+query-filters:
+  # The CLI is a user-run client: it reads its own config/credentials files (~/.config/mcpwiki, 0600)
+  # and sends the bearer token to the wiki URL the user configured (https enforced), and it writes
+  # downloaded articles / exports to files the user asked for. These two rules flag exactly that design.
+  # Reviewed 2026-10 (see docs/security.md).
+  - exclude:
+      id: js/file-access-to-http
+  - exclude:
+      id: js/http-to-file-access
