@@ -49,7 +49,13 @@ Each article has a **read scope** and a **write scope**. All permission checks l
 ## UI and help pages
 
 - A sidebar is always visible on the left: navigation, help, recently updated articles and tags. On narrow screens, toggle it with ☰.
-- On first start, two help articles are created automatically: `help-wiki` (how to use MCPWiki) and `help-markdown` (Markdown guide; the pages are in Japanese). Everyone can read them; only admins can edit them. They aren't re-created after being edited or deleted. The sources are `src/backend/seed/*.md`; run `node scripts/gen-seed.mjs` after changing them (lint checks that the generated file is up to date).
+- On first start, two help articles are created automatically: `help-wiki` (how to use MCPWiki) and `help-markdown` (Markdown guide; the pages are in Japanese). Everyone can read them; only admins can edit them. While nobody has edited a page, updates to its source are applied after a deploy. Pages that an admin has edited or deleted are left alone (never re-created or overwritten). The sources are `src/backend/seed/*.md`; run `node scripts/gen-seed.mjs` after changing them (lint checks that the generated file is up to date).
+- The footer shows the MCPWiki version (the tag name for releases, `git describe` otherwise) and a link to GitHub.
+
+## Admin features
+
+- **Site title:** change it under Admin → Site settings (up to 60 characters). It is used in the header, the browser tab and the `index.md` of exports. The sign-in screen keeps showing "MCPWiki".
+- **Download all articles:** Admin → OKF import/export → "Download all articles as ZIP" downloads every live article (whatever its read scope; deleted articles are excluded) as an OKF bundle: `index.md` plus `wiki/<id>.md` files with frontmatter. The bundle can be imported as is. Attachments are not included. The ZIP is written to `exports/` in S3 and handed out as a presigned URL valid for 5 minutes; a lifecycle rule deletes it after one day. Only admins in the web UI can use it (not the CLI or MCP), and each export is recorded in the audit log as `export-all`.
 
 ## Attachments (images and PDF)
 
@@ -260,6 +266,8 @@ Body… [related](/wiki/other-article)
 ## Cost
 
 At small scale (tens of users, thousands of articles), dev costs a few USD per month. prod adds WAF (about 9 USD per month), WAF logs and Backup (which scales with data size), for an expected total of about 10–20 USD per month. There are no always-on resources.
+
+Every resource carries the cost allocation tags `Project=mcpwiki`, `Environment=dev|prod` (`shared` for the guard and CI stacks), `Component=app|edge|cicd|guard` and `ManagedBy=cdk`. To group costs by them in Cost Explorer, activate the keys under Billing → Cost allocation tags (once, in the management account; new tags can take up to 24 hours to appear there). Add or override tags with `-c costTags='{"CostCenter":"..."}'`.
 
 ## Layout
 

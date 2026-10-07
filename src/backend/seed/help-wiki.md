@@ -115,5 +115,6 @@ claude mcp add --scope user mcpwiki -- mcpwiki mcp --env dev
 
 ## そのほか
 
-- **OKF でのエクスポート:** 管理者は「管理」→「OKF 入出力」から、記事を Open Knowledge Format のファイル群（ZIP）として出力・取り込みできます。CLI では `mcpwiki export` を使います。
+- **OKF でのエクスポート:** 管理者は「管理」→「OKF 入出力」から、すべての記事を Open Knowledge Format のファイル群（ZIP）として一括ダウンロードしたり、取り込んだりできます。CLI の `mcpwiki export` では、自分が読める記事を出力できます。
+- **サイトタイトル:** 管理者は「管理」→「サイト設定」で、ヘッダーに表示する名前を変更できます。
 - **困ったとき:** 管理者に連絡してください。

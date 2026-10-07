@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { App, Annotations, DefaultStackSynthesizer, PermissionsBoundary, Tags, Validations } from 'aws-cdk-lib';
 import { AwsSolutionsChecks } from 'cdk-nag';
+import type { IConstruct } from 'constructs';
 import { CiStack } from './ci-stack.js';
 import { EdgeStack, type DomainConfig } from './edge-stack.js';
 import { DEV_BOUNDARY_NAME, DEV_QUALIFIER, GuardStack } from './guard-stack.js';
@@ -49,7 +50,22 @@ const domainFor = (env: 'dev' | 'prod'): DomainConfig | undefined => {
 };
 
 // Shared-account guard rails (deploy manually as an administrator; see README "dev / prod isolation").
-new GuardStack(app, 'MCPWiki-guard', { env: { account, region }, devHost: domainFor('dev')?.host });
+// Cost allocation tags (keys follow the account's active cost allocation tags; extend or override with
+// -c costTags='{"CostCenter":"..."}'). The guard and CI stacks serve both environments.
+const costTagsCtx = app.node.tryGetContext('costTags') as Record<string, string> | string | undefined;
+const extraCostTags: Record<string, string> = typeof costTagsCtx === 'string' ? JSON.parse(costTagsCtx) : (costTagsCtx ?? {});
+for (const [k, v] of Object.entries(extraCostTags)) {
+  if (!/^(?!aws:)[\p{L}\p{N} _.:/=+@-]{1,128}$/u.test(k) || typeof v !== 'string' || !/^[\p{L}\p{N} _.:/=+@-]{0,256}$/u.test(v)) {
+    throw new Error(`invalid cost tag: ${k}`);
+  }
+}
+const costTags = (scope: IConstruct, environment: string, component: string) => {
+  for (const [k, v] of Object.entries({ Project: 'mcpwiki', Environment: environment, Component: component, ManagedBy: 'cdk', ...extraCostTags })) {
+    Tags.of(scope).add(k, v);
+  }
+};
+
+const guard = new GuardStack(app, 'MCPWiki-guard', { env: { account, region }, devHost: domainFor('dev')?.host });
 
 for (const envName of ['dev', 'prod'] as const) {
   const domain = domainFor(envName);
@@ -87,6 +103,8 @@ for (const envName of ['dev', 'prod'] as const) {
     if (!st) continue;
     Tags.of(st).add('mcpwiki:env', envName);
   }
+  costTags(wiki, envName, 'app');
+  if (edge) costTags(edge, envName, 'edge');
   if (envName === 'prod' && !alarmEmail) {
     Annotations.of(wiki).addWarningV2('mcpwiki:noAlarmEmail', 'prod has no alarm recipient: set MCPWIKI_ALARM_EMAIL (or -c alarmEmail=...)');
   }
@@ -94,15 +112,17 @@ for (const envName of ['dev', 'prod'] as const) {
 
 const githubRepo = app.node.tryGetContext('githubRepo') as string | undefined;
 if (githubRepo) {
-  new CiStack(app, 'MCPWiki-ci', {
+  const ci = new CiStack(app, 'MCPWiki-ci', {
     env: { account, region },
     githubRepo,
     existingOidcProviderArn: app.node.tryGetContext('githubOidcProviderArn') as string | undefined,
     subjectPrefix: app.node.tryGetContext('githubOidcSubjectPrefix') as string | undefined,
   });
+  costTags(ci, 'shared', 'cicd');
 }
 
 Tags.of(app).add('app', 'mcpwiki');
+costTags(guard, 'shared', 'guard');
 Validations.of(app).addPlugins(new AwsSolutionsChecks(app, { verbose: true }));
 
 // CDK-internal providers created during the final synthesis phase (e.g. cross-region reference

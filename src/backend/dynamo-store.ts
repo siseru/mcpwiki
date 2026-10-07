@@ -24,7 +24,7 @@ import {
   type QueryCommandInput,
 } from '@aws-sdk/lib-dynamodb';
 import { DeleteObjectCommand, GetObjectCommand, NoSuchKey, PutObjectCommand, S3Client, S3ServiceException } from '@aws-sdk/client-s3';
-import type { ArticleMeta, Attachment, AuditEntry, HistoryEntry } from '../shared/types.js';
+import type { ArticleMeta, Attachment, AuditEntry, HistoryEntry, SiteSettings } from '../shared/types.js';
 import { ConflictError } from './errors.js';
 import type { AttachmentBlobs, MetaPage, Store, UserState } from './store.js';
 import { envCredentials, presignGet, presignPost } from './sigv4.js';
@@ -305,6 +305,15 @@ export class DynamoStore implements Store {
     await this.ddb.send(new PutCommand({ TableName: this.table, Item: { PK: `U#${sub}`, SK: 'STATE', ...state } }));
   }
 
+  async getSettings() {
+    const res = await this.ddb.send(new GetCommand({ TableName: this.table, Key: { PK: 'SETTINGS', SK: 'SITE' } }));
+    return res.Item ? { title: typeof res.Item.title === 'string' ? res.Item.title : undefined } : null;
+  }
+
+  async putSettings(s: SiteSettings) {
+    await this.ddb.send(new PutCommand({ TableName: this.table, Item: { PK: 'SETTINGS', SK: 'SITE', title: s.title } }));
+  }
+
   async hit(key: string, windowSec: number, limit: number) {
     const now = Math.floor(Date.now() / 1000);
     const w = Math.floor(now / windowSec);
@@ -386,6 +395,10 @@ export class S3Blobs implements AttachmentBlobs {
     const res = await this.s3.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
     if ((res.ContentLength ?? 0) > maxBytes) throw new Error('object too large');
     return Buffer.from((await res.Body?.transformToByteArray()) ?? []);
+  }
+
+  async put(key: string, data: Buffer, contentType: string) {
+    await this.s3.send(new PutObjectCommand({ Bucket: this.bucket, Key: key, Body: data, ContentType: contentType }));
   }
 
   async remove(key: string) {

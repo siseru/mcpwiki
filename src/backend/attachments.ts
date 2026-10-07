@@ -123,6 +123,19 @@ export class AttachmentService {
     return view(ready);
   }
 
+  /**
+   * Admin full export: the zip is written to `exports/` (expired by a bucket lifecycle rule after a day) and
+   * handed out as a short-lived presigned URL, so its size is not bound by the API response limit.
+   */
+  async exportArchive(p: Principal) {
+    const { zip, count } = await this.wiki.exportArchive(p);
+    const stamp = this.now().toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
+    const key = `exports/${stamp}-${newId()}.zip`;
+    await this.blobs.put(key, zip, 'application/zip');
+    const filename = `mcpwiki-all-${stamp.slice(0, 8)}.zip`;
+    return { count, size: zip.length, filename, url: this.blobs.presignDownload(key, 'application/zip', `attachment; filename="${filename}"`), expiresInSeconds: 300 };
+  }
+
   /** Short-lived download URL (images inline, everything else as a download). */
   async downloadUrl(p: Principal, articleId: string, fileId: string) {
     const a = await this.ready(p, articleId, fileId);

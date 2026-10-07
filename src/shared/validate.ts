@@ -1,5 +1,5 @@
 // Input validation shared by API, MCP and CLI.
-import type { ArticleInput, JsonValue } from './types.js';
+import type { ArticleInput, JsonValue, SiteSettings } from './types.js';
 import { READ_SCOPES, STATUSES, WRITE_SCOPES } from './types.js';
 import { RESERVED_KEYS } from './okf.js';
 import { scopesValid } from './permissions.js';
@@ -152,6 +152,22 @@ export function validateArticleInput(input: unknown, partial: boolean): ArticleI
 }
 
 const encoder = new TextEncoder();
+export const SITE_TITLE_CHARS = 60;
+
+/** Admin site settings. Throws ValidationError. */
+export function validateSiteSettings(input: unknown): SiteSettings {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new ValidationError(['body must be an object']);
+  const { title, ...rest } = input as Record<string, unknown>;
+  const errors: string[] = [];
+  if (Object.keys(rest).length) errors.push(`unknown field(s): ${Object.keys(rest).join(', ')}`);
+  const t = typeof title === 'string' ? title.normalize('NFC').trim() : '';
+  if (typeof title !== 'string' || !t) errors.push('title is required');
+  else if ([...t].length > SITE_TITLE_CHARS) errors.push(`title must be at most ${SITE_TITLE_CHARS} characters`);
+  else if (CONTROL_RE.test(t) || LINE_UNSAFE_RE.test(t) || /[\t\n\r]/.test(t)) errors.push('title must be a single line without control characters');
+  if (errors.length) throw new ValidationError(errors);
+  return { title: t };
+}
+
 export function utf8Length(s: string): number {
   return encoder.encode(s).length;
 }

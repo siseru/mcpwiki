@@ -143,6 +143,13 @@ export interface Graph {
 }
 
 /** Runtime configuration published to browsers / CLI at /config.json. */
+/** Wiki-wide settings editable by admins. */
+export interface SiteSettings {
+  title: string;
+}
+
+export const DEFAULT_SITE_TITLE = 'MCPWiki';
+
 export interface PublicConfig {
   env: string;
   region: string;

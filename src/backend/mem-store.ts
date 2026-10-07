@@ -1,5 +1,5 @@
 // In-memory Store for tests and local development.
-import type { ArticleMeta, Attachment, AuditEntry, HistoryEntry } from '../shared/types.js';
+import type { ArticleMeta, Attachment, AuditEntry, HistoryEntry, SiteSettings } from '../shared/types.js';
 import { ConflictError } from './errors.js';
 import type { AttachmentBlobs, MetaPage, Store, UserState } from './store.js';
 import { listKey } from './store.js';
@@ -118,6 +118,14 @@ export class MemoryStore implements Store {
     this.users.set(sub, clone(state));
   }
 
+  private settings: SiteSettings | null = null;
+  async getSettings() {
+    return this.settings ? clone(this.settings) : null;
+  }
+  async putSettings(s: SiteSettings) {
+    this.settings = clone(s);
+  }
+
   async hit(key: string, windowSec: number, limit: number) {
     const k = `${key}#${Math.floor(Date.now() / 1000 / windowSec)}`;
     const n = (this.counters.get(k) ?? 0) + 1;
@@ -144,7 +152,7 @@ export class MemoryBlobs implements AttachmentBlobs {
   objects = new Map<string, Buffer>();
   /** Base URL of a fake object store (tests point this at a local server). */
   constructor(public baseUrl = 'https://blobs.test') {}
-  put(key: string, data: Buffer) {
+  async put(key: string, data: Buffer, _contentType?: string) {
     this.objects.set(key, data);
   }
   presignUpload(key: string, contentType: string, maxBytes: number) {
