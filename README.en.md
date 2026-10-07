@@ -101,7 +101,9 @@ Set the alarm recipient with `MCPWIKI_ALARM_EMAIL=ops@example.com` (or `-c alarm
 | `scorecard.yml` | main / weekly | **OpenSSF Scorecard** |
 | `deploy.yml` | main → dev, `v*` tags → prod | Build and synth run in a job that has no cloud credentials. Only the deploy job can get an OIDC token, and it installs with `npm ci --ignore-scripts` and no cache. |
 
-Results are collected in GitHub's Security tab (code scanning). Every action is pinned to a commit SHA, and Dependabot keeps the pins up to date.
+**Private repositories:** code scanning (SARIF upload), Dependency Review and secret scanning need paid GitHub features (GitHub Code Security / Secret Protection). By default the workflows don't use them. Each scanner, CodeQL included, fails its job when it finds something and keeps the report as an artifact. Once the repository is public, or you have the paid features, set the repository variable `CODE_SCANNING_ENABLED=true` and the results are collected in GitHub's Security tab (code scanning). On private repositories, rulesets (branch protection) and environment required reviewers may also depend on your plan.
+
+ Every action is pinned to a commit SHA, and Dependabot keeps the pins up to date.
 
 ### One-time GitHub setup
 

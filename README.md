@@ -101,7 +101,9 @@ scripts/create-admin.sh dev <username> <email> admin   # 最初の管理者を�
 | `scorecard.yml` | main / 毎週 | **OpenSSF Scorecard** |
 | `deploy.yml` | main → dev、`v*` タグ → prod | 認証情報を持たないジョブで build/synth し、デプロイするジョブだけが OIDC トークンを得ます（`npm ci --ignore-scripts`、キャッシュなし） |
 
-結果は GitHub の Security タブ（Code scanning）に集約されます。アクションはすべてコミット SHA で固定し、Dependabot が更新します。
+**Private リポジトリで運用する場合:** Code scanning（SARIF のアップロード）、Dependency Review、Secret scanning は、GitHub の有償機能（GitHub Code Security / Secret Protection）が必要です。既定ではこれらを使わず、各スキャナは指摘があればジョブを失敗させ、レポートを artifact に残します（CodeQL も同じ）。Public にする、または有償機能を契約したら、リポジトリ変数 `CODE_SCANNING_ENABLED=true` を設定すると、結果が GitHub の Security タブ（Code scanning）に集約されます。Rulesets によるブランチ保護と、Environment の Required reviewers も、Private ではプランによって使えないことがあります。
+
+アクションはすべてコミット SHA で固定し、Dependabot が更新します。
 
 ### GitHub 側の初期設定（初回のみ）
 

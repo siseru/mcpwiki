@@ -28,3 +28,24 @@ jobs:
           languages: ${{ matrix.language }}
           queries: security-extended
       - uses: github/codeql-action/analyze@1190a975f95ce23525efb6a3fc21ea29567c1b52 # v3.38.2
+        with:
+          # Uploading to code scanning needs a public repo or GitHub Code Security (CODE_SCANNING_ENABLED=true).
+          upload: ${{ vars.CODE_SCANNING_ENABLED == 'true' && 'always' || 'never' }}
+          output: codeql-results
+      - name: Fail on CodeQL findings
+        run: |
+          python3 - <<'PY'
+          import glob, json, sys
+          results = [r for f in glob.glob('codeql-results/*.sarif') for run in json.load(open(f))['runs'] for r in run.get('results', [])]
+          for r in results:
+              loc = r['locations'][0]['physicalLocation']
+              print(f"::error file={loc['artifactLocation']['uri']},line={loc.get('region', {}).get('startLine', 1)}::{r['ruleId']}: {r['message']['text']}")
+          print(f"{len(results)} CodeQL finding(s)")
+          sys.exit(1 if results else 0)
+          PY
+      - if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: codeql-${{ matrix.language }}
+          path: codeql-results/
+          if-no-files-found: ignore

@@ -1,6 +1,9 @@
 name: Security
 
 # Continuous security review: every PR, every push to main, and weekly (catches newly published CVEs).
+# GitHub code scanning (SARIF upload) and Dependency Review need a public repository or a paid
+# GitHub Code Security plan. Set the repository variable CODE_SCANNING_ENABLED=true when available;
+# otherwise every scanner still runs and fails the job on findings, and reports are kept as artifacts.
 on:
   pull_request:
   push:
@@ -28,15 +31,21 @@ jobs:
         run: |
           docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:v8.30.1 \
             git /repo --redact --exit-code 1 --report-format sarif --report-path /repo/gitleaks.sarif
-      - if: always()
+      - if: always() && vars.CODE_SCANNING_ENABLED == 'true'
         uses: github/codeql-action/upload-sarif@1190a975f95ce23525efb6a3fc21ea29567c1b52 # v3.38.2
         with:
           sarif_file: gitleaks.sarif
           category: gitleaks
+      - if: always() && !(vars.CODE_SCANNING_ENABLED == 'true')
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: gitleaks-sarif
+          path: gitleaks.sarif
+          if-no-files-found: ignore
 
   dependencies:
     name: Dependency review
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && vars.CODE_SCANNING_ENABLED == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -75,11 +84,17 @@ jobs:
         run: |
           pipx run --spec 'checkov==3.3.25' checkov --config-file .checkov.yaml -d cdk.out \
             --output cli --output sarif --output-file-path console,checkov.sarif
-      - if: always()
+      - if: always() && vars.CODE_SCANNING_ENABLED == 'true'
         uses: github/codeql-action/upload-sarif@1190a975f95ce23525efb6a3fc21ea29567c1b52 # v3.38.2
         with:
           sarif_file: checkov.sarif
           category: checkov
+      - if: always() && !(vars.CODE_SCANNING_ENABLED == 'true')
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: checkov-sarif
+          path: checkov.sarif
+          if-no-files-found: ignore
 
   workflows:
     name: GitHub Actions audit (zizmor)
@@ -93,11 +108,17 @@ jobs:
           persist-credentials: false
       - name: zizmor
         run: pipx run 'zizmor==1.30.1' --format sarif .github/workflows > zizmor.sarif
-      - if: always()
+      - if: always() && vars.CODE_SCANNING_ENABLED == 'true'
         uses: github/codeql-action/upload-sarif@1190a975f95ce23525efb6a3fc21ea29567c1b52 # v3.38.2
         with:
           sarif_file: zizmor.sarif
           category: zizmor
+      - if: always() && !(vars.CODE_SCANNING_ENABLED == 'true')
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: zizmor-sarif
+          path: zizmor.sarif
+          if-no-files-found: ignore
       - name: zizmor (fail on findings)
         run: pipx run 'zizmor==1.30.1' --min-severity medium .github/workflows
 
