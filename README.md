@@ -122,7 +122,9 @@ scripts/create-admin.sh dev <username> <email> admin   # 最初の管理者を�
    ```bash
    gh api -X PUT repos/<owner>/<repo>/actions/oidc/customization/sub \
      --input - <<< '{"use_default":false,"include_claim_keys":["repo","context","ref"]}'
+   gh api repos/<owner>/<repo>/actions/oidc/customization/sub    # sub_claim_prefix を確認
    ```
+   GitHub は、ID を含む変更不能な `sub`（`repo:<owner>@<owner-id>/<repo>@<repo-id>`）を使います。表示された `sub_claim_prefix` を `cdk.json` の `context.githubOidcSubjectPrefix` に設定し、手順 1 の CI スタックをデプロイし直してください。名前を変更されたり、同じ名前のリポジトリを第三者に作られたりしても、ロールを引き受けられません。
 3. 準備が整ったら、リポジトリ変数 `DEPLOY_ENABLED=true` を設定します（設定するまで Deploy ワークフローはスキップされます）。Environments の `dev` と `prod` には次の変数を設定します: `AWS_DEPLOY_ROLE_ARN`（スタック出力）、`AWS_ACCOUNT_ID`、`AWS_REGION`、`MCPWIKI_DOMAINS`（任意）、`MCPWIKI_ALARM_EMAIL`。
 4. Environments の `dev` と `prod` に、シークレット `ARTIFACT_ENCRYPTION_KEY` を登録します（環境ごとに別の値）。Deploy の artifact（合成済みのアセンブリ）を暗号化する鍵で、未設定だとデプロイは失敗します。
    ```bash

@@ -124,7 +124,9 @@ Set the alarm recipient with `MCPWIKI_ALARM_EMAIL=ops@example.com` (or `-c alarm
    ```bash
    gh api -X PUT repos/<owner>/<repo>/actions/oidc/customization/sub \
      --input - <<< '{"use_default":false,"include_claim_keys":["repo","context","ref"]}'
+   gh api repos/<owner>/<repo>/actions/oidc/customization/sub    # check sub_claim_prefix
    ```
+   GitHub uses an immutable subject that contains numeric ids: `repo:<owner>@<owner-id>/<repo>@<repo-id>`. Put the printed `sub_claim_prefix` into `context.githubOidcSubjectPrefix` in `cdk.json`, then redeploy the CI stack from step 1. A rename, or someone re-creating a repository with the same name, then cannot assume the roles.
 3. When ready, set the repository variable `DEPLOY_ENABLED=true`; until then the Deploy workflow is skipped. Create the `dev` and `prod` environments and set these variables on each: `AWS_DEPLOY_ROLE_ARN` (from the stack outputs), `AWS_ACCOUNT_ID`, `AWS_REGION`, `MCPWIKI_DOMAINS` (optional) and `MCPWIKI_ALARM_EMAIL`.
 4. Add the secret `ARTIFACT_ENCRYPTION_KEY` to both the `dev` and `prod` environments, with a different value for each. It encrypts the deploy artifact (the synthesized assembly); deploys fail if it's missing.
    ```bash

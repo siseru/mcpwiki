@@ -98,6 +98,7 @@ if (githubRepo) {
     env: { account, region },
     githubRepo,
     existingOidcProviderArn: app.node.tryGetContext('githubOidcProviderArn') as string | undefined,
+    subjectPrefix: app.node.tryGetContext('githubOidcSubjectPrefix') as string | undefined,
   });
 }
 

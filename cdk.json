@@ -16,6 +16,7 @@
     "@aws-cdk/aws-apigateway:disableCloudWatchRole": true,
     "@aws-cdk/core:enablePartitionLiterals": true,
     "@aws-cdk/core:defaultCrossStackReferences": "strong",
-    "cli-telemetry": false
+    "cli-telemetry": false,
+    "githubOidcSubjectPrefix": "repo:siseru@34407385/mcpwiki@1408073691"
   }
 }
