@@ -51,6 +51,18 @@ English | [日本語](security.md)
   - reserved extension keys, and `__proto__` and similar keys at any depth, are rejected
   - every document is serialized and parsed back before it is stored, and must round-trip
 
+## Attachments
+
+| Threat | Mitigation |
+|---|---|
+| Unauthorized viewing | Attachments follow the article's `readScope`; attachments of unreadable articles return 404. No cookies are used: the SPA fetches a presigned URL (valid for 5 minutes) with its token and shows the file through a `blob:` URL. |
+| XSS through script-bearing files (SVG, HTML) | Only PNG, JPEG, GIF, WebP and PDF are allowed. After upload, magic bytes are checked against the declared type and mismatches are discarded. Downloads have a fixed `Content-Type`, and PDFs are always served as `attachment`. |
+| Oversized files / overwriting other objects | The presigned POST policy pins the key, the `Content-Type` and the declared size (up to 10 MB). There is a limit of 100 files per article, and write rate limits apply. |
+| Hijacking someone else's upload | Only the user who started an upload can complete it. |
+| Malicious file names | Paths, control characters, bidi characters and quotes are stripped from display names. The CLI never uses a server-provided name as a path. |
+| Abuse through MCP | MCP cannot upload. It can read only images up to 3 MB. |
+| Data loss | The Lambda's only delete permission is `DeleteObject` on `attachments/*`; it has no version-deletion permission, so deleted or rejected files remain recoverable from S3 object versions. |
+
 ## Web (XSS / clickjacking)
 
 - **Rendering:** marked converts Markdown, DOMPurify sanitizes the result, and CSP restricts the page:

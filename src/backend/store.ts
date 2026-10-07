@@ -1,5 +1,5 @@
 // Persistence interface. Implemented by DynamoStore (AWS) and MemoryStore (tests/local).
-import type { ArticleMeta, AuditEntry, HistoryEntry } from '../shared/types.js';
+import type { ArticleMeta, Attachment, AuditEntry, HistoryEntry } from '../shared/types.js';
 
 export interface UserState {
   disabled: boolean;
@@ -44,6 +44,20 @@ export interface Store {
 
   /** Fixed-window counter. Returns false when the limit is exceeded. */
   hit(key: string, windowSec: number, limit: number): Promise<boolean>;
+
+  putAttachment(a: Attachment): Promise<void>;
+  getAttachment(articleId: string, fileId: string): Promise<Attachment | null>;
+  listAttachments(articleId: string): Promise<Attachment[]>;
+}
+
+/** Attachment bytes live in object storage; uploads/downloads go directly between client and storage. */
+export interface AttachmentBlobs {
+  presignUpload(key: string, contentType: string, maxBytes: number): { url: string; fields: Record<string, string> };
+  presignDownload(key: string, contentType: string, disposition: string): string;
+  /** Size and first bytes of an uploaded object, or null if it does not exist. */
+  head(key: string, bytes: number): Promise<{ size: number; head: Buffer } | null>;
+  read(key: string, maxBytes: number): Promise<Buffer>;
+  remove(key: string): Promise<void>;
 }
 
 export const listKey = (m: Pick<ArticleMeta, 'updatedAt' | 'id'>) => `${m.updatedAt}#${m.id}`;

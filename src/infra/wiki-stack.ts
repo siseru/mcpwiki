@@ -68,6 +68,15 @@ export class WikiStack extends Stack {
       serverAccessLogsPrefix: 's3-content/',
       removalPolicy,
       autoDeleteObjects: !prod,
+      // Browsers upload attachments with presigned POSTs and fetch them with presigned GETs, from the wiki origin only.
+      cors: [
+        {
+          allowedOrigins: [props.domain ? `https://${props.domain.host}` : 'https://*.cloudfront.net'],
+          allowedMethods: [s3.HttpMethods.POST, s3.HttpMethods.GET],
+          allowedHeaders: ['content-type'],
+          maxAge: 600,
+        },
+      ],
     });
 
     const webBucket = new s3.Bucket(this, 'Web', {
@@ -197,11 +206,19 @@ export class WikiStack extends Stack {
       },
       description: `MCPWiki ${envName} API + MCP`,
     });
-    // Least privilege: no object deletion (history is immutable), only the operations the store uses.
+    // Least privilege: no object deletion for articles (history is immutable), only the operations the store uses.
     fn.addToRolePolicy(
       new iam.PolicyStatement({
         actions: ['s3:PutObject', 's3:GetObject', 's3:GetObjectVersion'],
         resources: [contentBucket.arnForObjects('articles/*')],
+      }),
+    );
+    // Attachments: the Lambda role signs presigned POST/GET URLs (so it needs Put/Get) and removes rejected or
+    // deleted files (versioned bucket: a delete marker; earlier versions stay recoverable, no DeleteObjectVersion).
+    fn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['s3:PutObject', 's3:GetObject', 's3:DeleteObject'],
+        resources: [contentBucket.arnForObjects('attachments/*')],
       }),
     );
     fn.addToRolePolicy(
@@ -274,8 +291,9 @@ export class WikiStack extends Stack {
       "default-src 'self'",
       "script-src 'self'",
       "style-src 'self'",
-      "img-src 'self' data:", // no third-party images: attacker-authored Markdown cannot beacon readers
-      `connect-src 'self' ${cognitoUrl}`,
+      "img-src 'self' data: blob:", // no third-party images (no reader beacons); blob: = attachments fetched with auth
+      // Attachments are uploaded to / downloaded from the content bucket with presigned URLs.
+      `connect-src 'self' ${cognitoUrl} https://${contentBucket.bucketRegionalDomainName}`,
       "font-src 'self'",
       "object-src 'none'",
       "base-uri 'none'",
@@ -475,6 +493,7 @@ export class WikiStack extends Stack {
     acknowledge(this, [
       { id: 'AwsSolutions-IAM4[Policy::arn:<AWS::Partition>:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole]', reason: 'CloudWatch Logs only.' },
       { id: `AwsSolutions-IAM5[Resource::<${this.getLogicalId(contentBucket.node.defaultChild as s3.CfnBucket)}.Arn>/articles/*]`, reason: 'Article objects (put/get/get-version only, no delete).' },
+      { id: `AwsSolutions-IAM5[Resource::<${this.getLogicalId(contentBucket.node.defaultChild as s3.CfnBucket)}.Arn>/attachments/*]`, reason: 'Attachment objects: presigned upload/download and removal of rejected/deleted files (no version deletion).' },
       { id: 'AwsSolutions-COG8', reason: 'Cognito Plus tier (threat protection) is not used for cost reasons; MFA is mandatory.' },
       { id: 'AwsSolutions-COG3', reason: 'Threat protection requires the Cognito Plus tier; MFA is mandatory and WAF rate limiting is applied in prod (cost trade-off).' },
       { id: 'AwsSolutions-APIG4', reason: 'Authorization is performed in the Lambda (Cognito JWT verification, see src/backend/auth.ts) so MCP clients get RFC 9728 WWW-Authenticate responses.' },

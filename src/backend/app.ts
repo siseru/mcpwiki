@@ -4,6 +4,7 @@ import type { Principal } from '../shared/types.js';
 import { TokenVerifier } from './auth.js';
 import { badRequest, forbidden, HttpError, notFound } from './errors.js';
 import { handleMcpMessage } from './mcp.js';
+import type { AttachmentService } from './attachments.js';
 import type { WikiService } from './service.js';
 import type { Store } from './store.js';
 
@@ -24,6 +25,7 @@ export interface Res {
 
 export interface AppDeps {
   service: WikiService;
+  attachments: AttachmentService;
   verifier: TokenVerifier;
   store: Store;
   /** Public base URL, e.g. https://d123.cloudfront.net */
@@ -129,6 +131,24 @@ export function createApp(d: AppDeps): (req: Req) => Promise<Res> {
     },
     { method: 'POST', re: /^\/api\/articles\/([^/]+)\/restore$/, handler: async (p, _r, [id]) => (webOnly(p), json(200, svc.summary(p, await svc.restore(p, id!)))) },
     { method: 'POST', re: /^\/api\/articles\/([^/]+)\/verify$/, handler: async (p, _r, [id]) => (webOnly(p), json(200, svc.summary(p, await svc.verify(p, id!)))) },
+    // ---- attachments (access follows the article; upload = 2 steps: presigned POST, then complete)
+    { method: 'GET', re: /^\/api\/articles\/([^/]+)\/attachments$/, handler: async (p, _r, [id]) => json(200, { items: await d.attachments.list(p, id!) }) },
+    { method: 'POST', re: /^\/api\/articles\/([^/]+)\/attachments$/, handler: async (p, r, [id]) => json(201, await d.attachments.requestUpload(p, id!, parseJson(r))) },
+    {
+      method: 'POST',
+      re: /^\/api\/articles\/([^/]+)\/attachments\/([^/]+)\/complete$/,
+      handler: async (p, _r, [id, f]) => json(200, await d.attachments.complete(p, id!, f!)),
+    },
+    {
+      method: 'GET',
+      re: /^\/api\/articles\/([^/]+)\/attachments\/([^/]+)\/url$/,
+      handler: async (p, _r, [id, f]) => json(200, await d.attachments.downloadUrl(p, id!, f!)),
+    },
+    {
+      method: 'DELETE',
+      re: /^\/api\/articles\/([^/]+)\/attachments\/([^/]+)$/,
+      handler: async (p, _r, [id, f]) => (webOnly(p), await d.attachments.remove(p, id!, f!), json(200, { ok: true })),
+    },
     { method: 'GET', re: /^\/api\/articles\/([^/]+)\/history$/, handler: async (p, _r, [id]) => json(200, { items: await svc.history(p, id!) }) },
     { method: 'GET', re: /^\/api\/articles\/([^/]+)\/backlinks$/, handler: async (p, _r, [id]) => json(200, { items: await svc.backlinks(p, id!) }) },
     { method: 'GET', re: /^\/api\/search$/, handler: async (p, r) => json(200, { items: await svc.search(p, r.query.q ?? '', { tag: r.query.tag, limit: r.query.limit }) }) },
@@ -239,7 +259,7 @@ export function createApp(d: AppDeps): (req: Req) => Promise<Res> {
         if (!okAll || !okWrite) throw new HttpError(429, 'rate_limited', 'too many requests; slow down', { retryAfterSeconds: 60 });
       }
       if (r.path === '/mcp') {
-        const out = await handleMcpMessage(svc, p, msg, r.headers['mcp-protocol-version']);
+        const out = await handleMcpMessage(svc, p, msg, r.headers['mcp-protocol-version'], d.attachments);
         if (out.body === undefined) return { status: out.status, headers: { ...BASE_HEADERS }, body: '' };
         return json(out.status, out.body);
       }

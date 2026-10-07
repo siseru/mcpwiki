@@ -46,6 +46,15 @@ LLM / MCP から使うことを前提にした、軽量なサーバーレス Wik
 - **権限を広げられるのは Web 画面からだけです。** CLI / MCP / API のトークンでは狭めることしかできません。シェルを使えるエージェントがプロンプトインジェクションを受けても、記事を公開されないようにするためです。
 - 編集は**楽観ロック**です（`version` が一致しなければ 409）。
 
+## 添付ファイル（画像・PDF）
+
+- 対応形式は PNG、JPEG、GIF、WebP、PDF で、1 ファイル 10MB まで、1 記事 100 ファイルまでです。SVG と HTML はスクリプトを含められるため受け付けません。
+- 編集画面の「画像・PDF を添付」ボタン、ドラッグ＆ドロップ、貼り付けで添付すると、`![名前](/wiki/<記事ID>/files/<ファイルID>)` がカーソル位置に挿入されます。PDF はリンク形式になります。
+- **アクセス権は記事に従います。** 閲覧するには記事の閲覧権限が、添付と削除には編集権限が必要です。非公開の記事の添付は、URL を知っていても見られません。
+- ファイルは Lambda を経由せず、有効期限 5 分の署名付き URL で S3 と直接やり取りします。署名の際に、保存先の場所、形式、サイズを固定します。アップロード後には、サーバーがファイル先頭のバイト列で形式を確認し、一致しなければ破棄します。画像はページ内に表示し、PDF は常にダウンロードとして扱います。
+- 削除は Web 画面からのみ行えます。S3 のバージョン管理により、管理者は復元できます。
+- CLI: `mcpwiki attach <id> <ファイル>`、`mcpwiki attachments <id>`、`mcpwiki download <id> <ファイルID>`。MCP: `list_attachments`、`get_attachment`（3MB までの画像を LLM に渡します）。MCP からはアップロードできません。
+
 ## セットアップ
 
 前提: Node.js 20 以上（CI は 24）、AWS CLI、管理者権限の資格情報、既定の CDK bootstrap（us-west-2 と us-east-1）。
@@ -151,6 +160,9 @@ mcpwiki create --title "手順書" --tags ops,aws --file doc.md
 mcpwiki edit <id>                 # $EDITOR で OKF 文書を編集（楽観ロック付き）
 mcpwiki graph <id> --depth 2 --tags
 mcpwiki export --out bundle.zip   # 自分が読める記事の OKF バンドル
+mcpwiki attach <id> shot.png      # 添付（表示された Markdown を本文に貼る）
+mcpwiki attachments <id>          # 添付の一覧
+mcpwiki download <id> <ファイルID> # 添付の保存
 ```
 
 ブラウザが別のマシンにある場合は、サインイン後に表示される `http://localhost:53682/callback?...` の URL を CLI に貼り付けてください。トークンは `~/.config/mcpwiki/credentials.json`（0600）に保存し、自動で更新します。
@@ -209,6 +221,7 @@ claude mcp list            # mcpwiki が Connected になっていることを�
 | `list_articles` / `get_article` / `search_articles` | 一覧、OKF 文書の取得（過去の版も可）、全文検索 |
 | `create_article` / `update_article` | 作成（既定は `status: draft`）、部分更新（`version` 必須、権限は狭めるだけ） |
 | `list_tags` / `get_graph` / `get_backlinks` | タグ、関連グラフ（`link` は有向、`tag` は共通タグ）、被リンク |
+| `list_attachments` / `get_attachment` | 添付の一覧、画像の取得（3MB まで。PDF はメタデータのみ） |
 
 記事の内容は信頼できないデータとして扱い、応答ごとにランダムな境界タグで区切って返します。
 

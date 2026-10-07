@@ -1,7 +1,7 @@
 // In-memory Store for tests and local development.
-import type { ArticleMeta, AuditEntry, HistoryEntry } from '../shared/types.js';
+import type { ArticleMeta, Attachment, AuditEntry, HistoryEntry } from '../shared/types.js';
 import { ConflictError } from './errors.js';
-import type { MetaPage, Store, UserState } from './store.js';
+import type { AttachmentBlobs, MetaPage, Store, UserState } from './store.js';
 import { listKey } from './store.js';
 
 const clone = <T>(v: T): T => structuredClone(v);
@@ -16,6 +16,7 @@ export class MemoryStore implements Store {
   audit: AuditEntry[] = [];
   users = new Map<string, UserState>();
   counters = new Map<string, number>();
+  attachments = new Map<string, Attachment>();
 
   async putBody(id: string, text: string): Promise<string> {
     const list = this.bodies.get(id) ?? [];
@@ -122,5 +123,47 @@ export class MemoryStore implements Store {
     const n = (this.counters.get(k) ?? 0) + 1;
     this.counters.set(k, n);
     return n <= limit;
+  }
+
+  async putAttachment(a: Attachment) {
+    this.attachments.set(`${a.articleId}/${a.fileId}`, clone(a));
+  }
+
+  async getAttachment(articleId: string, fileId: string) {
+    const a = this.attachments.get(`${articleId}/${fileId}`);
+    return a ? clone(a) : null;
+  }
+
+  async listAttachments(articleId: string) {
+    return [...this.attachments.values()].filter((a) => a.articleId === articleId).map(clone);
+  }
+}
+
+/** In-memory object storage for tests: "uploads" are simulated with put(). */
+export class MemoryBlobs implements AttachmentBlobs {
+  objects = new Map<string, Buffer>();
+  /** Base URL of a fake object store (tests point this at a local server). */
+  constructor(public baseUrl = 'https://blobs.test') {}
+  put(key: string, data: Buffer) {
+    this.objects.set(key, data);
+  }
+  presignUpload(key: string, contentType: string, maxBytes: number) {
+    return { url: `${this.baseUrl}/`, fields: { key, 'Content-Type': contentType, maxBytes: String(maxBytes) } };
+  }
+  presignDownload(key: string, contentType: string, disposition: string) {
+    return `${this.baseUrl}/${key}?type=${encodeURIComponent(contentType)}&disposition=${encodeURIComponent(disposition)}`;
+  }
+  async head(key: string, bytes: number) {
+    const o = this.objects.get(key);
+    return o ? { size: o.length, head: o.subarray(0, bytes) } : null;
+  }
+  async read(key: string, maxBytes: number) {
+    const o = this.objects.get(key);
+    if (!o) throw new Error('no such object');
+    if (o.length > maxBytes) throw new Error('object too large');
+    return o;
+  }
+  async remove(key: string) {
+    this.objects.delete(key);
   }
 }

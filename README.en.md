@@ -46,6 +46,17 @@ Each article has a **read scope** and a **write scope**. All permission checks l
 - **Permissions can only be widened from the web UI.** CLI, MCP and API tokens can only narrow them. This means a prompt-injected agent with shell access still can't make articles public.
 - Edits use **optimistic locking**: if your `version` doesn't match the current one, the server returns 409.
 
+## Attachments (images and PDF)
+
+- **Allowed:** PNG, JPEG, GIF, WebP and PDF, up to 10 MB per file and 100 files per article. SVG and HTML are rejected because they can carry script.
+- **Adding files in the editor:** use "Attach image / PDF", drag & drop, or paste. Each file inserts `![name](/wiki/<article-id>/files/<file-id>)` at the cursor; PDFs are inserted as plain links.
+- **Access follows the article.** Viewing an attachment needs read access to its article; uploading and deleting need write access. Attachments of a private article stay private even if someone has the URL.
+- **Transfer:** bytes never pass through Lambda. Clients exchange files directly with S3 using presigned URLs that are valid for 5 minutes and pinned to one key, type and size.
+- **Verification:** after an upload, the server checks the file's magic bytes against the declared type and discards mismatches. Images are shown inline; PDFs are always served as downloads.
+- **Deletion:** web UI only. S3 versioning lets an administrator recover deleted files.
+- **CLI:** `mcpwiki attach <id> <file>`, `mcpwiki attachments <id>`, `mcpwiki download <id> <file-id>`.
+- **MCP:** `list_attachments`, and `get_attachment`, which returns images up to 3 MB as image content. Uploading through MCP is not possible.
+
 ## Setup
 
 Prerequisites: Node.js 20+ (CI runs 24), the AWS CLI, administrator credentials, and the default CDK bootstrap in us-west-2 and us-east-1.
@@ -151,6 +162,9 @@ mcpwiki create --title "Runbook" --tags ops,aws --file doc.md
 mcpwiki edit <id>                 # edit the OKF document in $EDITOR (optimistic locking)
 mcpwiki graph <id> --depth 2 --tags
 mcpwiki export --out bundle.zip   # OKF bundle of every article you can read
+mcpwiki attach <id> shot.png      # attach (paste the printed Markdown into the article)
+mcpwiki attachments <id>          # list attachments
+mcpwiki download <id> <file-id>   # save an attachment
 ```
 
 If your browser runs on a different machine, sign in and then paste the final `http://localhost:53682/callback?...` URL into the CLI. Tokens are saved to `~/.config/mcpwiki/credentials.json` (mode 0600) and refreshed automatically.
@@ -209,6 +223,7 @@ The remote endpoint is `https://<host>/mcp` (Streamable HTTP). Unauthenticated r
 | `list_articles` / `get_article` / `search_articles` | List articles, get an OKF document (including past versions), full-text search |
 | `create_article` / `update_article` | Create (defaults to `status: draft`), partial update (`version` required; permissions can only be narrowed) |
 | `list_tags` / `get_graph` / `get_backlinks` | Tags, relationship graph (`link` edges are directed; `tag` edges mean shared tags), backlinks |
+| `list_attachments` / `get_attachment` | List attachments; get an image (up to 3 MB; PDFs return metadata only) |
 
 Article content is treated as untrusted data. Each response wraps it in a randomly named boundary tag.
 

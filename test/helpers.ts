@@ -1,7 +1,8 @@
 import { generateKeyPairSync, sign } from 'node:crypto';
 import { TokenVerifier, type Jwk } from '../src/backend/auth.js';
 import { createApp, type Req, type Res } from '../src/backend/app.js';
-import { MemoryStore } from '../src/backend/mem-store.js';
+import { MemoryBlobs, MemoryStore } from '../src/backend/mem-store.js';
+import { AttachmentService } from '../src/backend/attachments.js';
 import { WikiService } from '../src/backend/service.js';
 import { MemoryUserDirectory } from '../src/backend/users.js';
 
@@ -46,7 +47,9 @@ export function setup(opts: { rateLimit?: { perMinute: number; writesPerMinute: 
     clients: async () => ({ [WEB]: 'web', [CLI]: 'cli' }),
     fetchJwks: async () => ({ keys: [jwk] }),
   });
-  const app = createApp({ service, verifier, store, publicUrl: 'https://wiki.example.com', issuer: ISSUER, ...opts });
+  const blobs = new MemoryBlobs();
+  const attachments = new AttachmentService(store, blobs, service);
+  const app = createApp({ service, attachments, verifier, store, publicUrl: 'https://wiki.example.com', issuer: ISSUER, ...opts });
 
   async function call(
     user: User | null,
@@ -85,5 +88,5 @@ export function setup(opts: { rateLimit?: { perMinute: number; writesPerMinute: 
     return { isError: !!r.result.isError, text, data: r.result.structuredContent };
   }
 
-  return { store, dir, service, app, call, mcp, tool };
+  return { store, dir, service, blobs, app, call, mcp, tool };
 }

@@ -151,6 +151,18 @@ export class WikiService {
     return m;
   }
 
+  /** Readable (and optionally writable) live article for features built on top of articles (attachments). */
+  async articleFor(p: Principal, id: string, needWrite: boolean): Promise<ArticleMeta> {
+    const m = await this.readable(p, id);
+    if (m.deleted) throw notFound();
+    if (needWrite && !canWrite(p, m)) throw forbidden('you cannot edit this article');
+    return m;
+  }
+
+  async auditEvent(p: Principal, action: string, articleId?: string, detail?: string): Promise<void> {
+    await this.audit(p, action, articleId, detail);
+  }
+
   private async bodyOf(m: ArticleMeta): Promise<string> {
     return bodyFromStored(await this.store.getBody(m.id, m.s3VersionId));
   }

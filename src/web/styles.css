@@ -79,3 +79,13 @@ svg.graph .node:focus circle { stroke: #000; stroke-width: 2; }
 .markdown-body img { max-width: 100%; }
 .markdown-body ul.contains-task-list, .markdown-body li.task-list-item { list-style: none; }
 .markdown-body hr { border: 0; border-top: 1px solid var(--border); }
+/* attachments */
+.attach-bar { margin: .4rem 0; display: flex; align-items: center; flex-wrap: wrap; gap: .3rem; }
+.attach-bar input[type=file] { display: none; }
+.attachments { margin-top: 2rem; border-top: 1px solid var(--border); }
+.attachments ul { list-style: none; padding: 0; }
+.attachments li { padding: .3rem 0; display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+.snippet-md { font-size: .8rem; color: var(--muted); }
+button.small { padding: .1rem .5rem; font-size: .8rem; }
+.markdown-body img.attachment-loading { min-width: 4rem; min-height: 2rem; background: var(--bg2); }
+.markdown-body img.attachment-missing { border: 1px dashed var(--danger); padding: .3rem; }

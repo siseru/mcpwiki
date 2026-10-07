@@ -9,6 +9,7 @@
 //   AUDIT#<date>  <ts>#<rand>    audit log entry (TTL)
 //   U#<sub>       STATE          user state (disable / token revocation)
 //   RL#<key>#<w>  RL             rate-limit counter (TTL)
+//   A#<id>        F#<fileId>     attachment metadata (bytes in S3 under attachments/<id>/<fileId>)
 import { randomUUID } from 'node:crypto';
 import { ConditionalCheckFailedException, DynamoDBClient, TransactionCanceledException } from '@aws-sdk/client-dynamodb';
 import {
@@ -22,10 +23,11 @@ import {
   UpdateCommand,
   type QueryCommandInput,
 } from '@aws-sdk/lib-dynamodb';
-import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
-import type { ArticleMeta, AuditEntry, HistoryEntry } from '../shared/types.js';
+import { DeleteObjectCommand, GetObjectCommand, NoSuchKey, PutObjectCommand, S3Client, S3ServiceException } from '@aws-sdk/client-s3';
+import type { ArticleMeta, Attachment, AuditEntry, HistoryEntry } from '../shared/types.js';
 import { ConflictError } from './errors.js';
-import type { MetaPage, Store, UserState } from './store.js';
+import type { AttachmentBlobs, MetaPage, Store, UserState } from './store.js';
+import { envCredentials, presignGet, presignPost } from './sigv4.js';
 import { listKey } from './store.js';
 
 const AUDIT_TTL_DAYS = 400;
@@ -321,5 +323,73 @@ export class DynamoStore implements Store {
       if (e instanceof ConditionalCheckFailedException) return false;
       throw e;
     }
+  }
+
+  async putAttachment(a: Attachment) {
+    await this.ddb.send(new PutCommand({ TableName: this.table, Item: { PK: `A#${a.articleId}`, SK: `F#${a.fileId}`, ...a } }));
+  }
+
+  async getAttachment(articleId: string, fileId: string) {
+    const res = await this.ddb.send(new GetCommand({ TableName: this.table, Key: { PK: `A#${articleId}`, SK: `F#${fileId}` } }));
+    if (!res.Item) return null;
+    const { PK: _p, SK: _s, ...rest } = res.Item;
+    return rest as unknown as Attachment;
+  }
+
+  async listAttachments(articleId: string) {
+    const res = await this.ddb.send(
+      new QueryCommand({
+        TableName: this.table,
+        KeyConditionExpression: 'PK = :pk AND begins_with(SK, :f)',
+        ExpressionAttributeValues: { ':pk': `A#${articleId}`, ':f': 'F#' },
+      }),
+    );
+    return (res.Items ?? []).map(({ PK: _p, SK: _s, ...rest }) => rest as unknown as Attachment);
+  }
+}
+
+/** Attachment bytes in the content bucket; clients upload/download via short-lived presigned URLs. */
+export class S3Blobs implements AttachmentBlobs {
+  private readonly s3: S3Client;
+  constructor(private readonly bucket: string, private readonly region: string) {
+    this.s3 = new S3Client({ region });
+  }
+
+  presignUpload(key: string, contentType: string, maxBytes: number) {
+    return presignPost({ bucket: this.bucket, region: this.region, key, contentType, maxBytes, expiresSec: 300, credentials: envCredentials() });
+  }
+
+  presignDownload(key: string, contentType: string, disposition: string) {
+    return presignGet({
+      bucket: this.bucket,
+      region: this.region,
+      key,
+      expiresSec: 300,
+      credentials: envCredentials(),
+      responseHeaders: { 'response-content-type': contentType, 'response-content-disposition': disposition, 'response-cache-control': 'private, max-age=300' },
+    });
+  }
+
+  async head(key: string, bytes: number) {
+    try {
+      const res = await this.s3.send(new GetObjectCommand({ Bucket: this.bucket, Key: key, Range: `bytes=0-${bytes - 1}` }));
+      const head = Buffer.from((await res.Body?.transformToByteArray()) ?? []);
+      const total = Number(/\/(\d+)$/.exec(res.ContentRange ?? '')?.[1] ?? res.ContentLength ?? head.length);
+      return { size: total, head };
+    } catch (e) {
+      if (e instanceof NoSuchKey || (e instanceof S3ServiceException && e.$metadata.httpStatusCode === 404)) return null;
+      throw e;
+    }
+  }
+
+  async read(key: string, maxBytes: number) {
+    const res = await this.s3.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
+    if ((res.ContentLength ?? 0) > maxBytes) throw new Error('object too large');
+    return Buffer.from((await res.Body?.transformToByteArray()) ?? []);
+  }
+
+  async remove(key: string) {
+    // Versioned bucket: this adds a delete marker; earlier versions remain recoverable by an administrator.
+    await this.s3.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
   }
 }

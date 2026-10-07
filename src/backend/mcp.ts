@@ -4,6 +4,7 @@ import { randomBytes } from 'node:crypto';
 import type { Principal } from '../shared/types.js';
 import { READ_SCOPES, STATUSES, WRITE_SCOPES } from '../shared/types.js';
 import { HttpError } from './errors.js';
+import type { AttachmentService } from './attachments.js';
 import type { WikiService } from './service.js';
 
 export const SUPPORTED_PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26'];
@@ -17,6 +18,7 @@ const INSTRUCTIONS = `MCPWiki is a team wiki. Articles are GitHub-flavored Markd
 - Before update_article, call get_article and pass the "version" you read. If you get a version conflict, re-read and re-apply your change.
 - Articles you create via MCP default to status "draft".
 - ${UNTRUSTED_NOTICE}
+- Attachments (images, PDF) can be listed and images read via get_attachment; uploading is only possible from the web UI or CLI.
 - Deleting articles and widening permissions are not possible via MCP.`;
 
 interface JsonSchema {
@@ -32,7 +34,12 @@ interface ToolDef {
   description: string;
   inputSchema: JsonSchema;
   annotations: Record<string, boolean | string>;
-  run: (svc: WikiService, p: Principal, a: Record<string, unknown>) => Promise<{ text: string; structured?: Record<string, unknown> }>;
+  run: (
+    svc: WikiService,
+    p: Principal,
+    a: Record<string, unknown>,
+    att: AttachmentService,
+  ) => Promise<{ text: string; structured?: Record<string, unknown>; extra?: Record<string, unknown>[] }>;
 }
 
 const idProp = { type: 'string', pattern: '^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$', description: 'Article id' };
@@ -165,6 +172,36 @@ export const TOOLS: ToolDef[] = [
       withNotice({ ...(await s.graph(p, { id: a.id as string, depth: a.depth, tagEdges: a.include_tag_edges as boolean, limit: a.limit })) }),
   },
   {
+    name: 'list_attachments',
+    title: 'List attachments',
+    description: 'Files attached to an article (images and PDFs) with their Markdown snippets.',
+    inputSchema: { type: 'object', properties: { id: idProp }, required: ['id'], additionalProperties: false },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+    run: async (_s, p, a, att) => withNotice({ attachments: await att.list(p, a.id as string) }),
+  },
+  {
+    name: 'get_attachment',
+    title: 'Get attachment',
+    description:
+      'Returns an image attachment as image content (up to 3 MB). PDFs and larger files return metadata only; use the web UI or `mcpwiki download`.',
+    inputSchema: {
+      type: 'object',
+      properties: { id: idProp, file_id: { type: 'string', pattern: '^[a-z0-9]{12}$' } },
+      required: ['id', 'file_id'],
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false },
+    run: async (_s, p, a, att) => {
+      const r = await att.imageContent(p, a.id as string, a.file_id as string);
+      const meta = { _notice: UNTRUSTED_NOTICE, ...r.attachment, ...(r.data ? {} : { contentNotReturned: r.reason }) };
+      return {
+        text: json(meta),
+        structured: meta,
+        extra: r.data ? [{ type: 'image', data: r.data.toString('base64'), mimeType: r.attachment.contentType }] : undefined,
+      };
+    },
+  },
+  {
     name: 'get_backlinks',
     title: 'Get backlinks',
     description: 'Articles that link to the given article.',
@@ -216,7 +253,13 @@ export interface McpResponse {
 }
 
 /** Handle one JSON-RPC message from an authenticated principal. */
-export async function handleMcpMessage(svc: WikiService, p: Principal, raw: unknown, protocolHeader?: string): Promise<McpResponse> {
+export async function handleMcpMessage(
+  svc: WikiService,
+  p: Principal,
+  raw: unknown,
+  protocolHeader: string | undefined,
+  att: AttachmentService,
+): Promise<McpResponse> {
   if (protocolHeader && !SUPPORTED_PROTOCOL_VERSIONS.includes(protocolHeader)) {
     return { status: 400, body: rpcError(null, -32600, `unsupported MCP-Protocol-Version ${protocolHeader}`) };
   }
@@ -266,8 +309,8 @@ export async function handleMcpMessage(svc: WikiService, p: Principal, raw: unkn
       const errors = checkArgs(tool.inputSchema, args);
       if (errors.length) return { status: 200, body: rpcError(id, -32602, `invalid arguments: ${errors.join('; ')}`) };
       try {
-        const { text, structured } = await tool.run(svc, p, args);
-        const result: Record<string, unknown> = { content: [{ type: 'text', text }] };
+        const { text, structured, extra } = await tool.run(svc, p, args, att);
+        const result: Record<string, unknown> = { content: [{ type: 'text', text }, ...(extra ?? [])] };
         if (structured) result.structuredContent = structured;
         return { status: 200, body: { jsonrpc: '2.0', id, result } };
       } catch (e) {
