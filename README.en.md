@@ -115,9 +115,26 @@ Set the alarm recipient with `MCPWIKI_ALARM_EMAIL=ops@example.com` (or `-c alarm
      --input - <<< '{"use_default":false,"include_claim_keys":["repo","context","ref"]}'
    ```
 3. When ready, set the repository variable `DEPLOY_ENABLED=true`; until then the Deploy workflow is skipped. Create the `dev` and `prod` environments and set these variables on each: `AWS_DEPLOY_ROLE_ARN` (from the stack outputs), `AWS_ACCOUNT_ID`, `AWS_REGION`, `MCPWIKI_DOMAINS` (optional) and `MCPWIKI_ALARM_EMAIL`.
-4. On `prod`, set **Required reviewers**, enable "prevent self-review", and allow deployments only from `v*` tags. On `dev`, allow deployments only from `main`.
-5. Protect branches (require PRs, and require CI / Security / CodeQL to pass) and `v*` tags. Enable secret scanning with push protection, and private vulnerability reporting.
-6. Optional: set the repository variable `DEV_URL` as the ZAP target. For the AI review, set `ENABLE_AI_SECURITY_REVIEW=true` and the secret `ANTHROPIC_API_KEY`.
+4. Add the secret `ARTIFACT_ENCRYPTION_KEY` to both the `dev` and `prod` environments, with a different value for each. It encrypts the deploy artifact (the synthesized assembly); deploys fail if it's missing.
+   ```bash
+   openssl rand -hex 32 | gh secret set ARTIFACT_ENCRYPTION_KEY --env dev  -R <owner>/<repo>
+   openssl rand -hex 32 | gh secret set ARTIFACT_ENCRYPTION_KEY --env prod -R <owner>/<repo>
+   ```
+5. On `prod`, set **Required reviewers** and allow deployments only from `v*` tags. On `dev`, allow deployments only from `main`. While there is only one maintainer, do **not** enable "Prevent self-review": you would be unable to approve, and therefore to deploy, prod.
+6. Optional: set the repository variable `DEV_URL` as the ZAP target. For the AI review, set `ENABLE_AI_SECURITY_REVIEW=true` and the secret `ANTHROPIC_API_KEY`. To keep ZAP reports, also add a repository secret `ARTIFACT_ENCRYPTION_KEY`; the reports are stored encrypted.
+
+### Making the repository public
+
+Anyone can read the Actions logs, job summaries and artifacts of a public repository. The workflows therefore mask and redact environment-specific values (account id, hosted zone, host names, user pool ids and similar) with `scripts/ci/redact.mjs`, and encrypt the synthesized assembly with `scripts/ci/seal.sh`. lint enforces both. Before going public, configure the following on GitHub:
+
+| Setting | Where | What |
+|---|---|---|
+| Branch protection | Settings → Rules → Rulesets (`main`) | Require a PR (0 approvals is fine). Required checks: CI `test`, both CodeQL jobs, and the Security jobs. Block force pushes and deletion. |
+| Tag protection | Rulesets (tag, `v*`) | Only admins may create, update or delete (prod deploys run from tags) |
+| Fork PRs | Settings → Actions → General | "Require approval for all external contributors"; Workflow permissions set to "Read repository contents" |
+| Scanning | Settings → Advanced Security | Enable code scanning, secret scanning with push protection, and private vulnerability reporting. Set the repository variable `CODE_SCANNING_ENABLED=true`. |
+
+Anyone can open issues and pull requests; only people with write access (the maintainers) can merge. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## CLI
 

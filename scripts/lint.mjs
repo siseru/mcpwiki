@@ -56,6 +56,23 @@ const deployJob = deployWf.slice(deployWf.indexOf('\n  deploy:'));
 if (/npm ci(?! --ignore-scripts --prefix tools\/deploy)/.test(deployJob)) violations.push('deploy.yml: the deploy job may only run "npm ci --ignore-scripts --prefix tools/deploy"');
 if (/\bnpx\b/.test(deployJob)) violations.push('deploy.yml: the deploy job must not use npx (use tools/deploy/node_modules/.bin)');
 
+// Public-repository hygiene: environment-specific values must never reach logs or artifacts in clear text.
+const deployJobs = deployWf.slice(deployWf.indexOf('\njobs:\n') + 7);
+for (const job of deployJobs.split(/\n(?=  \w[\w-]*:\n)/)) {
+  const name = job.trim().slice(0, job.trim().indexOf(':'));
+  if (!job.includes('node scripts/ci/redact.mjs --mask')) violations.push(`deploy.yml (${name}): register masks first (node scripts/ci/redact.mjs --mask)`);
+  for (const m of job.matchAll(/upload-artifact@[\s\S]*?path:\s*(\S+)/g)) {
+    if (!m[1].endsWith('.sealed')) violations.push(`deploy.yml (${name}): only sealed artifacts may be uploaded (found ${m[1]})`);
+  }
+  const lines = job.split('\n');
+  lines.forEach((line, i) => {
+    // Command lines only (npx cdk / node_modules/.bin/cdk); a trailing "\" continues onto the next line.
+    if (!/(npx cdk|\.bin\/cdk) (deploy|synth)\b/.test(line)) return;
+    const cmd = /\\\s*$/.test(line) ? line + (lines[i + 1] ?? '') : line;
+    if (!/redact\.mjs/.test(cmd)) violations.push(`deploy.yml (${name}): pipe cdk output through scripts/ci/redact.mjs: ${line.trim().slice(0, 80)}`);
+  });
+}
+
 // Runtime dependencies are restricted to the approved set.
 const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 const allowed = new Set(['marked', 'dompurify']);

@@ -96,6 +96,7 @@ IAM Policy Simulator で確認済みの結果: 境界下のロールからの pr
 | IaC | cdk-nag（AwsSolutions。例外はすべて理由を記録）、checkov（合成済みテンプレート。除外は `.checkov.yaml` に理由付きで記載） |
 | パイプライン | zizmor、lint による「SHA 固定・`permissions` の明示・`id-token` は deploy ジョブのみ・`pull_request_target` 禁止」の検査、OpenSSF Scorecard |
 | 実行環境 | デプロイ後のスモークテスト（ヘッダ、認証、リダイレクト）、OWASP ZAP baseline（毎週、dev）、AI セキュリティレビュー（任意、PR） |
+| 公開時の情報管理 | Public リポジトリでは、ログ、サマリ、artifact を誰でも読めます。環境固有の値（アカウント ID、ホストゾーン、ホスト名、User Pool ID など）はマスクと伏せ字にし（`scripts/ci/redact.mjs`）、合成済みのアセンブリは Environment シークレットを鍵に暗号化と改ざん検知を行います（`scripts/ci/seal.sh`、encrypt-then-MAC）。lint で強制しています |
 | デプロイ | build / synth は認証情報なしで実行し、deploy ジョブだけが OIDC を使います（`--ignore-scripts`、キャッシュなし、合成済みアセンブリをそのままデプロイ） |
 
 ## 2026-10 のセキュリティレビュー（対応状況）

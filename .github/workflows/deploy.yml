@@ -3,6 +3,9 @@ name: Deploy
 # main -> dev (automatic). Tag v* -> prod (requires approval on the "prod" GitHub Environment).
 # Build/test/synth runs without cloud credentials; only the deploy job can mint an OIDC token, and it
 # installs dependencies without lifecycle scripts and deploys the already-synthesized cloud assembly.
+# Public-repository hygiene: logs, job summaries and artifacts are world-readable, so environment-specific
+# identifiers are masked/redacted (scripts/ci/redact.mjs) and the assembly is encrypted (scripts/ci/seal.sh)
+# with the environment secret ARTIFACT_ENCRYPTION_KEY.
 on:
   push:
     branches: [main]
@@ -26,6 +29,12 @@ jobs:
     environment: ${{ startsWith(github.ref, 'refs/tags/v') && 'prod' || 'dev' }}
     outputs:
       env: ${{ steps.env.outputs.env }}
+    env:
+      AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      CDK_DEFAULT_ACCOUNT: ${{ vars.AWS_ACCOUNT_ID }}
+      CDK_DEFAULT_REGION: ${{ vars.AWS_REGION }}
+      MCPWIKI_DOMAINS: ${{ vars.MCPWIKI_DOMAINS }}
+      MCPWIKI_ALARM_EMAIL: ${{ vars.MCPWIKI_ALARM_EMAIL }}
     steps:
       - id: env
         run: echo "env=${{ startsWith(github.ref, 'refs/tags/v') && 'prod' || 'dev' }}" >> "$GITHUB_OUTPUT"
@@ -33,6 +42,8 @@ jobs:
         with:
           fetch-depth: 0 # previous release tag for the infrastructure diff
           persist-credentials: false
+      - name: Mask environment-specific values in logs
+        run: node scripts/ci/redact.mjs --mask
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
@@ -40,31 +51,30 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm test
       - name: Synthesize cloud assembly
-        run: npx cdk synth --quiet -c githubRepo=${GITHUB_REPOSITORY}
-        env:
-          CDK_DEFAULT_ACCOUNT: ${{ vars.AWS_ACCOUNT_ID }}
-          CDK_DEFAULT_REGION: ${{ vars.AWS_REGION }}
-          MCPWIKI_DOMAINS: ${{ vars.MCPWIKI_DOMAINS }}
-          MCPWIKI_ALARM_EMAIL: ${{ vars.MCPWIKI_ALARM_EMAIL }}
+        run: |
+          set -o pipefail
+          npx cdk synth --quiet -c githubRepo=${GITHUB_REPOSITORY} 2>&1 | node scripts/ci/redact.mjs
       - name: Infrastructure diff vs previous release (shown before the prod approval)
         if: startsWith(github.ref, 'refs/tags/v')
-        env:
-          CDK_DEFAULT_ACCOUNT: ${{ vars.AWS_ACCOUNT_ID }}
-          CDK_DEFAULT_REGION: ${{ vars.AWS_REGION }}
-          MCPWIKI_DOMAINS: ${{ vars.MCPWIKI_DOMAINS }}
-          MCPWIKI_ALARM_EMAIL: ${{ vars.MCPWIKI_ALARM_EMAIL }}
         run: |
+          set -o pipefail
           git fetch --tags --quiet
           prev=$(git describe --tags --abbrev=0 --match 'v*' "${GITHUB_SHA}^" 2>/dev/null || true)
           if [ -z "$prev" ]; then echo "No previous release tag: first release, nothing to compare." >> "$GITHUB_STEP_SUMMARY"; exit 0; fi
           echo "Comparing with $prev" >> "$GITHUB_STEP_SUMMARY"
           git worktree add ../prev "$prev"
-          (cd ../prev && npm ci --ignore-scripts && npm run build && npx cdk synth --quiet -c githubRepo=${GITHUB_REPOSITORY} -o cdk.out.synth)
-          node scripts/supply-chain/template-diff.mjs ../prev/cdk.out.synth cdk.out
+          (cd ../prev && npm ci --ignore-scripts && npm run build && npx cdk synth --quiet -c githubRepo=${GITHUB_REPOSITORY} -o cdk.out.synth) 2>&1 | node scripts/ci/redact.mjs
+          # The job summary is public: write the diff to a temp file and redact it before publishing.
+          GITHUB_STEP_SUMMARY="$RUNNER_TEMP/diff.md" node scripts/supply-chain/template-diff.mjs ../prev/cdk.out.synth cdk.out | node scripts/ci/redact.mjs
+          node scripts/ci/redact.mjs < "$RUNNER_TEMP/diff.md" >> "$GITHUB_STEP_SUMMARY"
+      - name: Encrypt the cloud assembly (artifacts are public)
+        env:
+          ARTIFACT_ENCRYPTION_KEY: ${{ secrets.ARTIFACT_ENCRYPTION_KEY }}
+        run: scripts/ci/seal.sh seal cdk.out cdk-out.sealed
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: cdk-out
-          path: cdk.out/
+          name: cdk-out-sealed
+          path: cdk-out.sealed
           retention-days: 1
 
   deploy:
@@ -77,10 +87,14 @@ jobs:
       id-token: write # GitHub OIDC -> AWS (no stored access keys); scoped to this job only
     env:
       ENV_NAME: ${{ needs.build.outputs.env }}
+      AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      MCPWIKI_DOMAINS: ${{ vars.MCPWIKI_DOMAINS }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Mask environment-specific values in logs
+        run: node scripts/ci/redact.mjs --mask
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
@@ -89,13 +103,22 @@ jobs:
       - run: npm ci --ignore-scripts --prefix tools/deploy
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: cdk-out
-          path: cdk.out/
+          name: cdk-out-sealed
+      - name: Decrypt and verify the cloud assembly
+        env:
+          ARTIFACT_ENCRYPTION_KEY: ${{ secrets.ARTIFACT_ENCRYPTION_KEY }}
+        run: scripts/ci/seal.sh unseal cdk-out.sealed .
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
+          mask-aws-account-id: true
       - name: cdk deploy (pre-synthesized assembly)
-        run: tools/deploy/node_modules/.bin/cdk deploy --app cdk.out "MCPWiki-${ENV_NAME}-edge" "MCPWiki-${ENV_NAME}" --require-approval never --outputs-file outputs.json
+        run: |
+          set -o pipefail
+          tools/deploy/node_modules/.bin/cdk deploy --app cdk.out "MCPWiki-${ENV_NAME}-edge" "MCPWiki-${ENV_NAME}" \
+            --require-approval never --outputs-file outputs.json 2>&1 | node scripts/ci/redact.mjs
       - name: Smoke test
-        run: node scripts/smoke.mjs "$(node -p "require('./outputs.json')['MCPWiki-' + process.env.ENV_NAME].Url")"
+        run: |
+          set -o pipefail
+          node scripts/smoke.mjs "$(node -p "require('./outputs.json')['MCPWiki-' + process.env.ENV_NAME].Url")" 2>&1 | node scripts/ci/redact.mjs

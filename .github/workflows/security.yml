@@ -147,21 +147,35 @@ jobs:
       contents: read
     env:
       TARGET: ${{ vars.DEV_URL }}
+      REDACT_EXTRA: ${{ vars.DEV_URL }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: ZAP baseline (report only)
+      - name: Mask the target in logs
+        if: env.TARGET != ''
+        run: node scripts/ci/redact.mjs --mask
+      - name: ZAP baseline (report only; output redacted because logs are public)
         if: env.TARGET != ''
         run: |
+          set -o pipefail
           mkdir -p zap && chmod 777 zap
           docker run --rm -v "$PWD/zap:/zap/wrk" ghcr.io/zaproxy/zaproxy:stable \
-            zap-baseline.py -t "$TARGET" -r zap-report.html -J zap-report.json -I || true
+            zap-baseline.py -t "$TARGET" -r zap-report.html -J zap-report.json -I 2>&1 | node scripts/ci/redact.mjs || true
+      # The full report names the target host; keep it only encrypted (same key scheme as deploy artifacts).
+      - name: Encrypt the report
+        if: always() && env.TARGET != ''
+        env:
+          ARTIFACT_ENCRYPTION_KEY: ${{ secrets.ARTIFACT_ENCRYPTION_KEY }}
+        run: |
+          if [ -z "$ARTIFACT_ENCRYPTION_KEY" ]; then echo "No ARTIFACT_ENCRYPTION_KEY repository secret: report not uploaded."; exit 0; fi
+          scripts/ci/seal.sh seal zap zap-report.sealed
       - if: always() && env.TARGET != ''
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: zap-report
-          path: zap/
+          name: zap-report-sealed
+          path: zap-report.sealed
+          if-no-files-found: ignore
 
   ai-review:
     name: AI security review (Claude)

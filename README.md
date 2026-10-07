@@ -115,9 +115,26 @@ scripts/create-admin.sh dev <username> <email> admin   # 最初の管理者を�
      --input - <<< '{"use_default":false,"include_claim_keys":["repo","context","ref"]}'
    ```
 3. 準備が整ったら、リポジトリ変数 `DEPLOY_ENABLED=true` を設定します（設定するまで Deploy ワークフローはスキップされます）。Environments の `dev` と `prod` には次の変数を設定します: `AWS_DEPLOY_ROLE_ARN`（スタック出力）、`AWS_ACCOUNT_ID`、`AWS_REGION`、`MCPWIKI_DOMAINS`（任意）、`MCPWIKI_ALARM_EMAIL`。
-4. `prod` には **Required reviewers** と「自分の承認を禁止」を設定し、デプロイ元を `v*` タグに限定します。`dev` は `main` に限定します。
-5. ブランチ保護（PR 必須、CI / Security / CodeQL の成功を必須）、`v*` のタグ保護、Secret scanning と push protection、Private vulnerability reporting を有効にします。
-6. 任意: リポジトリ変数 `DEV_URL`（ZAP の対象）と、`ENABLE_AI_SECURITY_REVIEW=true` + シークレット `ANTHROPIC_API_KEY`（AI レビュー）を設定します。
+4. Environments の `dev` と `prod` に、シークレット `ARTIFACT_ENCRYPTION_KEY` を登録します（環境ごとに別の値）。Deploy の artifact（合成済みのアセンブリ）を暗号化する鍵で、未設定だとデプロイは失敗します。
+   ```bash
+   openssl rand -hex 32 | gh secret set ARTIFACT_ENCRYPTION_KEY --env dev  -R <owner>/<repo>
+   openssl rand -hex 32 | gh secret set ARTIFACT_ENCRYPTION_KEY --env prod -R <owner>/<repo>
+   ```
+5. `prod` には **Required reviewers** を設定し、デプロイ元を `v*` タグに限定します。`dev` は `main` に限定します。メンテナが 1 人のあいだは「Prevent self-review」を有効にしないでください（自分で承認できなくなり、prod にデプロイできなくなります）。
+6. 任意: リポジトリ変数 `DEV_URL`（ZAP の対象）と、`ENABLE_AI_SECURITY_REVIEW=true` + シークレット `ANTHROPIC_API_KEY`（AI レビュー）を設定します。ZAP のレポートを保存する場合は、リポジトリのシークレット `ARTIFACT_ENCRYPTION_KEY` も設定します（暗号化して保存します）。
+
+### 公開リポジトリにする場合
+
+Public リポジトリでは、Actions のログ、ジョブのサマリ、artifact を誰でも読めます。このため、環境固有の値（アカウント ID、ホストゾーン、ホスト名、User Pool ID など）は、ワークフローの中でマスクと伏せ字にしています（`scripts/ci/redact.mjs`）。合成済みのアセンブリは暗号化しています（`scripts/ci/seal.sh`）。どちらも lint で強制しています。公開する前に、GitHub で次の設定を行ってください。
+
+| 設定 | 場所 | 内容 |
+|---|---|---|
+| ブランチ保護 | Settings → Rules → Rulesets（`main`） | PR 必須（承認 0 件で可）、必須チェック（CI `test`、CodeQL の 2 ジョブ、Security の各ジョブ）、force push 禁止、削除禁止 |
+| タグ保護 | Rulesets（tag、`v*`） | 作成・更新・削除を管理者だけに制限（prod へのデプロイはタグで動くため） |
+| fork の PR | Settings → Actions → General | 「Require approval for all external contributors」。Workflow permissions は「Read repository contents」 |
+| コードスキャン | Settings → Advanced Security | Code scanning、Secret scanning と push protection、Private vulnerability reporting を有効化。リポジトリ変数 `CODE_SCANNING_ENABLED=true` |
+
+Issue と PR は誰でも作成できます。マージは、書き込み権限を持つ人（メンテナ）だけが行えます。貢献の手順は [CONTRIBUTING.md](CONTRIBUTING.md) を参照してください。
 
 ## CLI
 
