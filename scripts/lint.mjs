@@ -82,6 +82,13 @@ for (const f of readdirSync(wfDir).filter((f) => /\.ya?ml$/.test(f))) {
   });
 }
 
+// Default pages: the generated module must match src/backend/seed/*.md.
+try {
+  (await import('node:child_process')).execFileSync(process.execPath, [join(root, 'scripts/gen-seed.mjs'), '--check'], { stdio: 'pipe' });
+} catch {
+  violations.push('src/backend/seed/pages.generated.ts is out of date: run node scripts/gen-seed.mjs');
+}
+
 // Runtime dependencies are restricted to the approved set.
 const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 const allowed = new Set(['marked', 'dompurify']);

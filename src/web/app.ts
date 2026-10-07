@@ -95,6 +95,8 @@ async function render() {
     clear(el);
     el.appendChild(view);
     window.scrollTo(0, 0);
+    document.body.classList.remove('sidebar-open');
+    void refreshSidebar();
   } catch (e) {
     clear(el);
     el.appendChild(errorBox(e));
@@ -104,14 +106,15 @@ async function render() {
 // ------------------------------------------------------------------ views
 
 async function homeView() {
-  const [list, tags] = await Promise.all([api<{ items: ArticleSummary[]; cursor?: string }>('GET', '/api/articles?limit=50'), api<{ items: { tag: string; count: number }[] }>('GET', '/api/tags')]);
+  const list = await api<{ items: ArticleSummary[]; cursor?: string }>('GET', '/api/articles?limit=50');
   const ul = h('ul', { class: 'articles' }, ...list.items.map((a) => articleRow(a)));
   const more = list.cursor ? moreButton(ul, list.cursor) : null;
   return h(
-    'div',
-    { class: 'layout' },
-    h('section', null, h('h1', null, '最近更新された記事'), list.items.length ? ul : h('p', { class: 'muted' }, 'まだ記事がありません。'), more),
-    h('aside', null, h('h2', null, 'タグ'), h('div', { class: 'tagcloud' }, ...tags.items.slice(0, 60).map((t) => link(`/tags/${encodeURIComponent(t.tag)}`, h('span', { class: 'tag' }, `${t.tag} (${t.count})`))))),
+    'section',
+    null,
+    h('h1', null, '最近更新された記事'),
+    list.items.length ? ul : h('p', { class: 'muted' }, 'まだ記事がありません。'),
+    more,
   );
 }
 
@@ -196,6 +199,7 @@ async function articleView(id: string, version: number | undefined) {
             if (!confirm(`「${a.title}」を削除しますか？（管理者は復元できます）`)) return;
             try {
               await api('DELETE', `/api/articles/${id}`);
+              invalidateSidebar();
               navigate('/');
             } catch (e) {
               alert(e instanceof Error ? e.message : String(e));
@@ -410,10 +414,12 @@ function editorView(a: any | null) {
         try {
           if (a) {
             await api('PUT', `/api/articles/${a.id}`, { ...input, version: a.version });
+            invalidateSidebar();
             navigate(`/wiki/${a.id}`);
           } else {
             if (idInput.value) input.id = idInput.value;
             const r = await api<ArticleSummary>('POST', '/api/articles', input);
+            invalidateSidebar();
             navigate(`/wiki/${r.id}`);
           }
         } catch (e) {
@@ -621,19 +627,84 @@ function header() {
   const hdr = document.getElementById('header')!;
   clear(hdr);
   append(hdr, [
+    h('button', {
+      class: 'secondary menu-toggle',
+      'aria-label': 'メニュー',
+      'aria-controls': 'sidebar',
+      onclick: () => document.body.classList.toggle('sidebar-open'),
+    }, '☰'),
     link('/', h('span', { class: 'brand' }, 'MCPWiki')),
     h('form', { class: 'hsearch', onsubmit: (ev: Event) => (ev.preventDefault(), navigate(`/search?q=${encodeURIComponent(q.value)}`)) }, q),
     h(
       'nav',
       null,
-      me.role !== 'viewer' ? link('/new', '新規作成') : null,
-      link('/tags', 'タグ'),
-      link('/graph', 'グラフ'),
-      me.role === 'admin' ? link('/admin', '管理') : null,
       h('span', { class: 'user' }, `${me.username} (${me.role})`),
       h('button', { class: 'secondary', onclick: () => void logout() }, 'ログアウト'),
     ),
   ]);
+}
+
+// ------------------------------------------------------------------ sidebar (always visible; ☰ on small screens)
+
+const sideRecent = h('ul', { class: 'side-list' });
+const sideTags = h('div', { class: 'side-tags' });
+let sidebarLoadedAt = 0;
+
+function sidebar() {
+  const el = document.getElementById('sidebar')!;
+  clear(el);
+  const nav = (href: string, label: string) => h('li', null, link(href, label));
+  append(el, [
+    h('nav', { class: 'side-section' }, h('ul', { class: 'side-list' },
+      nav('/', 'トップ'),
+      me.role !== 'viewer' ? nav('/new', '＋ 新規作成') : null,
+      nav('/tags', 'タグ一覧'),
+      nav('/graph', '全体グラフ'),
+      me.role === 'admin' ? nav('/admin', '管理') : null,
+    )),
+    h('section', { class: 'side-section' }, h('h2', null, 'ヘルプ'), h('ul', { class: 'side-list' },
+      nav('/wiki/help-wiki', 'MCPWiki の使い方'),
+      nav('/wiki/help-markdown', 'Markdown の書き方'),
+    )),
+    h('section', { class: 'side-section' }, h('h2', null, '最近の更新'), sideRecent),
+    h('section', { class: 'side-section' }, h('h2', null, 'タグ'), sideTags),
+  ]);
+}
+
+const invalidateSidebar = () => {
+  sidebarLoadedAt = 0;
+};
+
+/** Recent articles / tags are refreshed at most every 30s (and right after saving or deleting). */
+async function refreshSidebar() {
+  markActive();
+  if (Date.now() - sidebarLoadedAt < 30_000) return;
+  sidebarLoadedAt = Date.now();
+  try {
+    const [recent, tags] = await Promise.all([
+      api<{ items: ArticleSummary[] }>('GET', '/api/articles?limit=10'),
+      api<{ items: { tag: string; count: number }[] }>('GET', '/api/tags'),
+    ]);
+    clear(sideRecent);
+    append(sideRecent, recent.items.map((a) => h('li', null, link(`/wiki/${a.id}`, a.title))));
+    if (!recent.items.length) sideRecent.appendChild(h('li', { class: 'muted' }, 'まだ記事がありません'));
+    clear(sideTags);
+    append(sideTags, tags.items.slice(0, 30).map((t) => link(`/tags/${encodeURIComponent(t.tag)}`, h('span', { class: 'tag' }, `${t.tag} ${t.count}`))));
+    markActive();
+  } catch {
+    sidebarLoadedAt = 0; // retry on the next navigation
+  }
+}
+
+function markActive() {
+  const path = decodeURI(location.pathname);
+  for (const a of document.querySelectorAll<HTMLAnchorElement>('#sidebar a')) {
+    const href = a.getAttribute('href') ?? '';
+    const active = href === path || (href !== '/' && href.startsWith('/admin') && path.startsWith('/admin'));
+    a.classList.toggle('active', active);
+    if (active) a.setAttribute('aria-current', 'page');
+    else a.removeAttribute('aria-current');
+  }
 }
 
 async function boot() {
@@ -655,6 +726,7 @@ async function boot() {
   }
   me = await api<Me>('GET', '/api/me');
   header();
+  sidebar();
   await render();
 }
 

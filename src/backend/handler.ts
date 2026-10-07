@@ -5,6 +5,7 @@ import { GetParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
 import { TokenVerifier, type Jwk } from './auth.js';
 import { createApp, type Req, type Res } from './app.js';
 import { AttachmentService } from './attachments.js';
+import { SEED_PAGES } from './seed/pages.generated.js';
 import { DynamoStore, S3Blobs } from './dynamo-store.js';
 import { WikiService } from './service.js';
 import { CognitoUserDirectory } from './users.js';
@@ -80,6 +81,13 @@ async function getApp() {
   const service = new WikiService(store, new CognitoUserDirectory(poolId, region), undefined, {
     cursorKey: createHash('sha256').update(`mcpwiki-cursor|${secret}`).digest(),
   });
+  // Default help pages: created once if missing (idempotent across concurrent cold starts).
+  try {
+    const created = await service.ensureSeedPages(SEED_PAGES);
+    if (created.length) console.log(JSON.stringify({ msg: 'seed pages created', created }));
+  } catch (err) {
+    console.error(JSON.stringify({ msg: 'seed pages failed', err: String(err) }));
+  }
   app = createApp({
     service,
     attachments: new AttachmentService(store, new S3Blobs(env('BUCKET_NAME'), region), service),

@@ -151,6 +151,30 @@ export class WikiService {
     return m;
   }
 
+  /**
+   * Creates the default pages (OKF documents) that do not exist yet. Pages that already exist — including
+   * edited or deleted ones — are never touched, so administrators keep full control after the first run.
+   */
+  async ensureSeedPages(pages: { id: string; text: string }[]): Promise<string[]> {
+    const system: Principal = { sub: 'system', username: 'MCPWiki', role: 'admin', clientId: 'system', via: 'api', issuedAt: 0 };
+    const created: string[] = [];
+    for (const page of pages) {
+      if (await this.store.getMeta(page.id)) continue;
+      const f = okfToArticleFields(parseOkfDocument(page.text));
+      try {
+        await this.create(
+          system,
+          { id: page.id, type: f.type, title: f.title, description: f.description, tags: f.tags, status: f.status, body: f.body, readScope: 'all', writeScope: 'admin' },
+          { generatedBy: 'process:mcpwiki-seed' },
+        );
+        created.push(page.id);
+      } catch (e) {
+        if (!(e instanceof HttpError && e.status === 409)) throw e; // created concurrently by another instance
+      }
+    }
+    return created;
+  }
+
   /** Readable (and optionally writable) live article for features built on top of articles (attachments). */
   async articleFor(p: Principal, id: string, needWrite: boolean): Promise<ArticleMeta> {
     const m = await this.readable(p, id);
