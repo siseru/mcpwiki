@@ -127,14 +127,14 @@ Set the alarm recipient with `MCPWIKI_ALARM_EMAIL=ops@example.com` (or `-c alarm
    gh api repos/<owner>/<repo>/actions/oidc/customization/sub    # check sub_claim_prefix
    ```
    GitHub uses an immutable subject that contains numeric ids: `repo:<owner>@<owner-id>/<repo>@<repo-id>`. Put the printed `sub_claim_prefix` into `context.githubOidcSubjectPrefix` in `cdk.json`, then redeploy the CI stack from step 1. A rename, or someone re-creating a repository with the same name, then cannot assume the roles.
-3. When ready, set the repository variable `DEPLOY_ENABLED=true`; until then the Deploy workflow is skipped. Create the `dev` and `prod` environments and set these variables on each: `AWS_DEPLOY_ROLE_ARN` (from the stack outputs), `AWS_ACCOUNT_ID`, `AWS_REGION`, `MCPWIKI_DOMAINS` (optional) and `MCPWIKI_ALARM_EMAIL`.
+3. When ready, set the repository variable `DEPLOY_ENABLED=true`; until then the Deploy workflow is skipped. Register environment-specific values as **secrets**: the repository secrets `AWS_ACCOUNT_ID`, `MCPWIKI_DOMAINS` (optional) and `MCPWIKI_ALARM_EMAIL`, and the environment secret `AWS_DEPLOY_ROLE_ARN` (from the stack outputs) on both `dev` and `prod`. Only `AWS_REGION` may be a repository variable. The runner prints each step's environment before masks take effect, so values stored as variables (vars) would appear in public logs. lint rejects reading them from vars.
 4. Add the secret `ARTIFACT_ENCRYPTION_KEY` to both the `dev` and `prod` environments, with a different value for each. It encrypts the deploy artifact (the synthesized assembly); deploys fail if it's missing.
    ```bash
    openssl rand -hex 32 | gh secret set ARTIFACT_ENCRYPTION_KEY --env dev  -R <owner>/<repo>
    openssl rand -hex 32 | gh secret set ARTIFACT_ENCRYPTION_KEY --env prod -R <owner>/<repo>
    ```
 5. On `prod`, set **Required reviewers** and allow deployments only from `v*` tags. On `dev`, allow deployments only from `main`. While there is only one maintainer, do **not** enable "Prevent self-review": you would be unable to approve, and therefore to deploy, prod.
-6. Optional: set the repository variable `DEV_URL` as the ZAP target. For the AI review, set `ENABLE_AI_SECURITY_REVIEW=true` and the secret `ANTHROPIC_API_KEY`. To keep ZAP reports, also add a repository secret `ARTIFACT_ENCRYPTION_KEY`; the reports are stored encrypted.
+6. Optional: set the secret `DEV_URL` as the ZAP target. For the AI review, set `ENABLE_AI_SECURITY_REVIEW=true` and the secret `ANTHROPIC_API_KEY`. To keep ZAP reports, also add a repository secret `ARTIFACT_ENCRYPTION_KEY`; the reports are stored encrypted.
 
 ### Making the repository public
 

@@ -125,14 +125,14 @@ scripts/create-admin.sh dev <username> <email> admin   # 最初の管理者を�
    gh api repos/<owner>/<repo>/actions/oidc/customization/sub    # sub_claim_prefix を確認
    ```
    GitHub は、ID を含む変更不能な `sub`（`repo:<owner>@<owner-id>/<repo>@<repo-id>`）を使います。表示された `sub_claim_prefix` を `cdk.json` の `context.githubOidcSubjectPrefix` に設定し、手順 1 の CI スタックをデプロイし直してください。名前を変更されたり、同じ名前のリポジトリを第三者に作られたりしても、ロールを引き受けられません。
-3. 準備が整ったら、リポジトリ変数 `DEPLOY_ENABLED=true` を設定します（設定するまで Deploy ワークフローはスキップされます）。Environments の `dev` と `prod` には次の変数を設定します: `AWS_DEPLOY_ROLE_ARN`（スタック出力）、`AWS_ACCOUNT_ID`、`AWS_REGION`、`MCPWIKI_DOMAINS`（任意）、`MCPWIKI_ALARM_EMAIL`。
+3. 準備が整ったら、リポジトリ変数 `DEPLOY_ENABLED=true` を設定します（設定するまで Deploy ワークフローはスキップされます）。環境固有の値は**シークレット**として登録します。リポジトリのシークレットに `AWS_ACCOUNT_ID`、`MCPWIKI_DOMAINS`（任意）、`MCPWIKI_ALARM_EMAIL` を、Environments の `dev` と `prod` のシークレットに `AWS_DEPLOY_ROLE_ARN`（スタック出力）を登録します。`AWS_REGION` だけはリポジトリの変数で構いません。変数（vars）は、マスクが効く前にランナーが各ステップの環境変数として表示するので、公開ログに値が出てしまいます。lint で、vars から読むことを禁止しています。
 4. Environments の `dev` と `prod` に、シークレット `ARTIFACT_ENCRYPTION_KEY` を登録します（環境ごとに別の値）。Deploy の artifact（合成済みのアセンブリ）を暗号化する鍵で、未設定だとデプロイは失敗します。
    ```bash
    openssl rand -hex 32 | gh secret set ARTIFACT_ENCRYPTION_KEY --env dev  -R <owner>/<repo>
    openssl rand -hex 32 | gh secret set ARTIFACT_ENCRYPTION_KEY --env prod -R <owner>/<repo>
    ```
 5. `prod` には **Required reviewers** を設定し、デプロイ元を `v*` タグに限定します。`dev` は `main` に限定します。メンテナが 1 人のあいだは「Prevent self-review」を有効にしないでください（自分で承認できなくなり、prod にデプロイできなくなります）。
-6. 任意: リポジトリ変数 `DEV_URL`（ZAP の対象）と、`ENABLE_AI_SECURITY_REVIEW=true` + シークレット `ANTHROPIC_API_KEY`（AI レビュー）を設定します。ZAP のレポートを保存する場合は、リポジトリのシークレット `ARTIFACT_ENCRYPTION_KEY` も設定します（暗号化して保存します）。
+6. 任意: シークレット `DEV_URL`（ZAP の対象）と、`ENABLE_AI_SECURITY_REVIEW=true` + シークレット `ANTHROPIC_API_KEY`（AI レビュー）を設定します。ZAP のレポートを保存する場合は、リポジトリのシークレット `ARTIFACT_ENCRYPTION_KEY` も設定します（暗号化して保存します）。
 
 ### 公開リポジトリにする場合
 
