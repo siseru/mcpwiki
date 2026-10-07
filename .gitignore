@@ -7,3 +7,5 @@ cdk.out/
 outputs*.json
 deploy-*.log
 config/*.local.json
+supply-chain-report/
+cdk.out.synth/

@@ -96,7 +96,8 @@ scripts/create-admin.sh dev <username> <email> admin   # 最初の管理者を�
 | ワークフロー | 契機 | 内容 |
 |---|---|---|
 | `ci.yml` | PR / main | lint（依存、XSS、ワークフローの固定）、型検査、テスト（セキュリティ回帰テストを含む）、`cdk synth` + **cdk-nag**、`npm audit`、`npm audit signatures` |
-| `security.yml` | PR / main / 毎週 | **gitleaks**（全履歴の秘密情報）、**Dependency Review**（PR）、**checkov**（合成済みテンプレート）、**zizmor**（Actions の監査）、**OWASP ZAP** baseline（dev、毎週）、**Claude による AI レビュー**（任意） |
+| `security.yml` | PR / main / 毎週 | **gitleaks**（全履歴の秘密情報）、**OSV-Scanner**（既知の脆弱性と悪性パッケージ）、**Dependency Review**（PR）、**checkov**（合成済みテンプレート）、**zizmor**（Actions の監査）、**OWASP ZAP** baseline（dev、毎週）、**Claude による AI レビュー**（任意） |
+| `supply-chain.yml` | 依存を変更する PR | **lockfile の審査**（公開から 7 日未満・インストールスクリプトの追加・provenance の欠落・レジストリ以外からの取得を拒否。公開者の変更と新規の依存は警告。実行時の依存の差分を保存）、**インフラ差分**（変更前後で synth して比較し、依存だけの PR でセキュリティに関わるリソースが変われば停止） |
 | `codeql.yml` | PR / main / 毎週 | **CodeQL**（security-extended、TypeScript と GitHub Actions） |
 | `scorecard.yml` | main / 毎週 | **OpenSSF Scorecard** |
 | `deploy.yml` | main → dev、`v*` タグ → prod | 認証情報を持たないジョブで build/synth し、デプロイするジョブだけが OIDC トークンを得ます（`npm ci --ignore-scripts`、キャッシュなし） |

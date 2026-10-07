@@ -96,7 +96,8 @@ Set the alarm recipient with `MCPWIKI_ALARM_EMAIL=ops@example.com` (or `-c alarm
 | Workflow | Runs on | What it does |
 |---|---|---|
 | `ci.yml` | PR / main | lint (dependencies, XSS, pinned workflow actions), type check, tests (including security regression tests), `cdk synth` with **cdk-nag**, `npm audit`, `npm audit signatures` |
-| `security.yml` | PR / main / weekly | **gitleaks** (secrets across the full history), **Dependency Review** (PRs), **checkov** (synthesized templates), **zizmor** (GitHub Actions audit), **OWASP ZAP** baseline (against dev, weekly), optional **AI review by Claude** |
+| `security.yml` | PR / main / weekly | **gitleaks** (secrets across the full history), **OSV-Scanner** (known vulnerable and malicious packages), **Dependency Review** (PRs), **checkov** (synthesized templates), **zizmor** (GitHub Actions audit), **OWASP ZAP** baseline (against dev, weekly), optional **AI review by Claude** |
+| `supply-chain.yml` | PRs that change dependencies | **Lockfile review**: blocks versions younger than 7 days, new install scripts, dropped provenance and non-registry sources; warns on publisher changes and new packages; saves runtime dependency diffs. **Infrastructure diff**: synthesizes base and PR and compares them; a dependency-only PR that changes security-relevant resources is blocked. |
 | `codeql.yml` | PR / main / weekly | **CodeQL** (security-extended, TypeScript and GitHub Actions) |
 | `scorecard.yml` | main / weekly | **OpenSSF Scorecard** |
 | `deploy.yml` | main → dev, `v*` tags → prod | Build and synth run in a job that has no cloud credentials. Only the deploy job can get an OIDC token, and it installs with `npm ci --ignore-scripts` and no cache. |

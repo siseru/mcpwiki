@@ -1,9 +1,15 @@
 version: 2
 updates:
   - package-ecosystem: npm
-    directory: /
+    # Root (build/test/synth) and tools/deploy (the only packages installed with AWS credentials).
+    directories: ['/', '/tools/deploy']
     schedule:
       interval: weekly
+    # Supply-chain cooldown: don't propose versions until they have been public for a while
+    # (compromised releases are usually detected and pulled within days). CI enforces the same age.
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
     groups:
       aws:
         patterns: ['aws-cdk*', '@aws-sdk/*', 'cdk-nag', 'constructs']
@@ -18,6 +24,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     groups:
       # One PR for all actions so pinned SHAs (e.g. codeql-action init/analyze/upload-sarif) move together.
       actions:

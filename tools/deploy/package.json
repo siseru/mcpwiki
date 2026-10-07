@@ -1,0 +1,9 @@
+{
+  "name": "mcpwiki-deploy-tools",
+  "private": true,
+  "description": "The only packages installed in the privileged (AWS credentials) deploy job. Keep minimal.",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "aws-cdk": "2.1143.0"
+  }
+}

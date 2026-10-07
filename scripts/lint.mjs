@@ -42,6 +42,20 @@ for (const f of readdirSync(wfDir).filter((f) => /\.ya?ml$/.test(f))) {
   if (f === 'deploy.yml' && /^permissions:[\s\S]*?^\S/m.exec(text)?.[0].includes('id-token')) violations.push(`.github/workflows/${f}: id-token must be granted per job, not workflow-wide`);
 }
 
+// Privileged deploy job: tools/deploy may only contain the aws-cdk CLI, at a version that can deploy what
+// the root synthesizes (same version as the root's aws-cdk), and the deploy job must not install the root tree.
+const deployPkg = JSON.parse(readFileSync(join(root, 'tools/deploy/package.json'), 'utf8'));
+const deployDeps = Object.keys({ ...deployPkg.dependencies, ...deployPkg.devDependencies });
+if (deployDeps.join() !== 'aws-cdk') violations.push(`tools/deploy/package.json: only aws-cdk is allowed (found ${deployDeps.join(', ')})`);
+const rootLock = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8'));
+const deployLock = JSON.parse(readFileSync(join(root, 'tools/deploy/package-lock.json'), 'utf8'));
+const v = (l) => l.packages?.['node_modules/aws-cdk']?.version;
+if (v(rootLock) !== v(deployLock)) violations.push(`aws-cdk version differs: root ${v(rootLock)} vs tools/deploy ${v(deployLock)}`);
+const deployWf = readFileSync(join(root, '.github/workflows/deploy.yml'), 'utf8');
+const deployJob = deployWf.slice(deployWf.indexOf('\n  deploy:'));
+if (/npm ci(?! --ignore-scripts --prefix tools\/deploy)/.test(deployJob)) violations.push('deploy.yml: the deploy job may only run "npm ci --ignore-scripts --prefix tools/deploy"');
+if (/\bnpx\b/.test(deployJob)) violations.push('deploy.yml: the deploy job must not use npx (use tools/deploy/node_modules/.bin)');
+
 // Runtime dependencies are restricted to the approved set.
 const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 const allowed = new Set(['marked', 'dompurify']);

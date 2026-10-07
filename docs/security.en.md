@@ -130,6 +130,28 @@ Operations on dev's own resources are allowed.
 
 **Residual risk:** resources that weren't created by CloudFormation and that match no naming or tag rule (for example, resources created by hand) aren't covered by the deny statements. Use separate accounts for complete isolation.
 
+## Compromised dependencies (supply chain)
+
+The threat is a public package that gets compromised and ships malicious code. No tool can detect this reliably, so several layers each lower the likelihood or the impact:
+
+| Layer | Mechanism |
+|---|---|
+| Don't adopt new releases immediately | A Dependabot cooldown of 7 days (14 for majors). CI also rejects any version published less than 7 days ago (`scripts/supply-chain/review-lockfile.mjs`). |
+| Detect suspicious signals | On every dependency PR, the npm registry is queried for each new version. **Blocked:** new install scripts, dropped provenance (signed build attestation), non-registry sources, integrity hashes other than sha512. **Warned:** a different publisher, newly introduced transitive packages. `npm audit signatures` also verifies registry signatures. |
+| Known malicious packages | OSV-Scanner, which includes the OpenSSF malicious-packages feed, runs on every PR and weekly, so merged dependencies keep being re-checked. |
+| Humans read runtime dependency changes | When a dependency shipped to the browser changes (`marked` / `DOMPurify`), its source diff against the previous version is saved as an artifact, and the PR is blocked until the `runtime-deps-reviewed` label is added. |
+| Infrastructure impact | Base and PR are both synthesized and compared. If a dependency-only PR changes IAM, policies, CloudFront, Cognito and similar resources, it is blocked until the `infra-diff-reviewed` label is added. Prod releases show the diff against the previous tag before approval (`scripts/supply-chain/template-diff.mjs`). |
+| Privilege separation | Jobs that execute dependency code (tests, build, synth, the checks above) have no credentials. The AWS-credentialed deploy job installs only the `aws-cdk` CLI from `tools/deploy` (one package, no dependencies) with `--ignore-scripts`, and deploys the pre-synthesized assembly. lint enforces this. |
+
+Labels record that a human reviewed the finding. `supply-chain-reviewed` accepts registry-metadata findings.
+
+The initial backfill found 12 packages published less than 7 days earlier. They were replaced with older versions using `npm install --before`.
+
+**Residual risk:**
+- A compromise that stays unnoticed for more than 7 days may not be detected.
+- Malicious changes by a legitimate publisher may not be detected.
+- The container image used inside the OSV-Scanner action is referenced by tag, not by digest.
+
 ## CI/CD and continuous security review
 
 | Layer | Mechanism |

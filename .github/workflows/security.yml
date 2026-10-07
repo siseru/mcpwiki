@@ -43,6 +43,23 @@ jobs:
           path: gitleaks.sarif
           if-no-files-found: ignore
 
+  osv:
+    name: Known vulnerable / malicious packages (OSV-Scanner)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # OSV includes the OpenSSF malicious-packages feed (MAL-* advisories); the weekly schedule re-checks
+      # already-merged lockfiles as new advisories are published.
+      - uses: google/osv-scanner-action/osv-scanner-action@a345acffa64b0eaede81a3d9aae6141214d9c8fc # v2.6.0
+        with:
+          scan-args: |-
+            --lockfile=package-lock.json
+            --lockfile=tools/deploy/package-lock.json
+
   dependencies:
     name: Dependency review
     if: github.event_name == 'pull_request' && vars.CODE_SCANNING_ENABLED == 'true'
