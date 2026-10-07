@@ -7,7 +7,14 @@ updates:
     groups:
       aws:
         patterns: ['aws-cdk*', '@aws-sdk/*', 'cdk-nag', 'constructs']
+      dev-tools:
+        dependency-type: development
+        exclude-patterns: ['aws-cdk*', '@aws-sdk/*', 'cdk-nag', 'constructs']
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    groups:
+      # One PR for all actions so pinned SHAs (e.g. codeql-action init/analyze/upload-sarif) move together.
+      actions:
+        patterns: ['*']
