@@ -26,6 +26,9 @@ const SENSITIVE = [
 const isSensitive = (type, path) => SENSITIVE.some((re) => re.test(type)) || /Polic(y|ies)|Role|Principal|AssumeRole/.test(path);
 
 const ASSET_HASH = /[0-9a-f]{64}/g;
+/** Markdown table cell from untrusted text (registry metadata / PR-controlled lockfile values). */
+const mdCell = (v) =>
+  String(v).replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/[\r\n]+/g, ' ').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/`/g, "'");
 
 function templates(dir) {
   const out = new Map();
@@ -91,7 +94,8 @@ for (const stack of new Set([...base.keys(), ...head.keys()])) {
     if (changed.length) {
       rows.push({
         stack, id, type, change: 'modified',
-        detail: changed.slice(0, 6).map((k) => `\`${k}\`: ${(fb[k] ?? '∅').slice(0, 80)} → ${(fh[k] ?? '∅').slice(0, 80)}`).join('<br>') + (changed.length > 6 ? `<br>… ${changed.length - 6} more` : ''),
+        // Each piece is escaped; only the <br> separators are markup.
+        detail: changed.slice(0, 6).map((k) => mdCell(`${k}: ${(fb[k] ?? '∅').slice(0, 80)} → ${(fh[k] ?? '∅').slice(0, 80)}`)).join('<br>') + (changed.length > 6 ? `<br>… ${changed.length - 6} more` : ''),
         sensitive: changed.some((k) => isSensitive(type, k)),
       });
     }
@@ -108,7 +112,7 @@ const lines = [
 ];
 if (rows.length) {
   lines.push('| | Stack | Resource | Type | Change | Detail |', '|---|---|---|---|---|---|');
-  for (const r of rows) lines.push(`| ${r.sensitive ? '⚠️' : ''} | ${r.stack} | ${r.id} | ${r.type} | ${r.change} | ${r.detail.replace(/\|/g, '\\|')} |`);
+  for (const r of rows) lines.push(`| ${r.sensitive ? '⚠️' : ''} | ${mdCell(r.stack)} | ${mdCell(r.id)} | ${mdCell(r.type)} | ${r.change} | ${r.detail} |`);
 } else {
   lines.push('_No structural changes._');
 }

@@ -1,0 +1,21 @@
+# OSV-Scanner exceptions. Every entry needs a reason and an expiry (ignoreUntil); when it expires the
+# Security workflow fails again and the exception must be re-evaluated (renew only with a new reason).
+
+# brace-expansion 5.0.9 is bundled *inside* the aws-cdk-lib tarball (bundleDependencies), so it cannot be
+# upgraded or overridden from this repository; aws-cdk-lib 2.272.0 (latest) still ships it. It is build-time
+# only (CDK asset exclude globs from this repository's own code) and never sees external input.
+# Re-check when aws-cdk-lib ships brace-expansion >= 5.0.12.
+[[IgnoredVulns]]
+id = "GHSA-6j4f-fj2g-mc7p"
+ignoreUntil = 2026-11-07T00:00:00Z
+reason = "brace-expansion bundled in aws-cdk-lib; build-time only, no external input; no upstream fix yet"
+
+[[IgnoredVulns]]
+id = "GHSA-q2hr-2g5m-vwhr"
+ignoreUntil = 2026-11-07T00:00:00Z
+reason = "brace-expansion bundled in aws-cdk-lib; build-time only, no external input; no upstream fix yet"
+
+[[IgnoredVulns]]
+id = "GHSA-qhr7-859c-m2p7"
+ignoreUntil = 2026-11-07T00:00:00Z
+reason = "brace-expansion bundled in aws-cdk-lib; build-time only, no external input; no upstream fix yet"

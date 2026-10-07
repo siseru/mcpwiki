@@ -58,7 +58,7 @@ const gitShow = (ref, file) => {
 const packuments = new Map();
 async function packument(name) {
   if (!packuments.has(name)) {
-    const url = REGISTRY + name.replace('/', '%2F');
+    const url = REGISTRY + encodeURIComponent(name);
     packuments.set(name, fetch(url, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(30_000) }).then((r) => {
       if (!r.ok) throw new Error(`registry ${r.status} for ${name}`);
       return r.json();
@@ -66,6 +66,12 @@ async function packument(name) {
   }
   return packuments.get(name);
 }
+
+/** Markdown table cell from untrusted text (registry metadata / PR-controlled lockfile values). */
+const mdCell = (v) =>
+  String(v).replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/[\r\n]+/g, ' ').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/`/g, "'");
+/** Safe file name from a package name/version taken from the (PR-controlled) lockfile. */
+const safeFile = (s) => String(s).replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^\.+/, '_').slice(0, 120);
 
 const INSTALL_SCRIPTS = ['preinstall', 'install', 'postinstall'];
 const hasScripts = (meta) => INSTALL_SCRIPTS.some((s) => meta?.scripts?.[s]);
@@ -126,7 +132,7 @@ for (const file of lockfiles) {
 if (runtimeChanges.length) {
   mkdirSync('supply-chain-report', { recursive: true });
   for (const p of runtimeChanges) {
-    const file = `supply-chain-report/${p.name.replace('/', '__')}-${p.prev?.version ?? 'new'}-to-${p.version}.diff`;
+    const file = `supply-chain-report/${safeFile(p.name)}-${safeFile(p.prev?.version ?? 'new')}-to-${safeFile(p.version)}.diff`;
     try {
       const args = p.prev ? ['diff', `--diff=${p.name}@${p.prev.version}`, `--diff=${p.name}@${p.version}`] : ['view', `${p.name}@${p.version}`];
       writeFileSync(file, execFileSync('npm', args, { encoding: 'utf8', maxBuffer: 256 << 20 }));
@@ -149,7 +155,7 @@ const lines = [
 if (reviewed === 0) lines.push('_No package versions changed (if this PR changed a lockfile, check that the base ref is correct)._');
 if (findings.length) {
   lines.push('| Level | Check | Package | Detail |', '|---|---|---|---|');
-  for (const f of findings) lines.push(`| ${f.level} | ${f.kind} | \`${f.pkg}\` | ${String(f.detail).replace(/\|/g, '\\|').slice(0, 300)} |`);
+  for (const f of findings) lines.push(`| ${f.level} | ${mdCell(f.kind)} | ${mdCell(f.pkg)} | ${mdCell(String(f.detail).slice(0, 300))} |`);
 }
 const report = lines.join('\n') + '\n';
 console.log(report);

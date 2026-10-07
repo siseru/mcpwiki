@@ -78,7 +78,7 @@ IAM Policy Simulator で確認済みの結果: 境界下のロールからの pr
 |---|---|
 | すぐには取り込まない | Dependabot の cooldown（7 日、メジャー更新は 14 日）。CI でも公開から 7 日未満の版を拒否します（`scripts/supply-chain/review-lockfile.mjs`） |
 | 怪しい兆候の検出 | 更新 PR ごとに npm レジストリを照会し、次を検査します: インストールスクリプトの追加、provenance（署名付きビルド証明）の欠落、レジストリ以外からの取得、sha512 以外の完全性ハッシュ（いずれも拒否）、公開者の変更と新規の推移的依存（警告）。`npm audit signatures` でレジストリ署名も検証します |
-| 既知の悪性パッケージ | OSV-Scanner（OpenSSF malicious-packages を含む）を PR ごとと毎週実行し、取り込み済みの依存も継続的に照合します |
+| 既知の悪性パッケージ | OSV-Scanner（OpenSSF malicious-packages を含む）を PR ごとと毎週実行し、取り込み済みの依存も継続的に照合します。例外は `osv-scanner.toml` に理由と期限（`ignoreUntil`）付きで記録し、期限を過ぎると再び失敗します |
 | 実行時の依存は人が読む | ブラウザに同梱される依存（`marked` / `DOMPurify`）が変わると、旧版との差分を artifact に保存し、`runtime-deps-reviewed` ラベルが付くまで止めます |
 | インフラへの影響 | 変更前後で CloudFormation を合成して比較します。依存だけの PR で IAM、ポリシー、CloudFront、Cognito などが変われば、`infra-diff-reviewed` ラベルが付くまで止めます。prod のリリース時は前回のタグとの差分を承認前に表示します（`scripts/supply-chain/template-diff.mjs`） |
 | 権限の分離 | 依存のコードが動くジョブ（テスト、ビルド、synth、上記の検査）には認証情報がありません。AWS の認証情報を持つデプロイ用ジョブでは、`tools/deploy` の `aws-cdk` CLI（依存なしの 1 パッケージ）だけを `--ignore-scripts` でインストールし、合成済みのアセンブリをデプロイします（lint で検査） |
