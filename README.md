@@ -111,7 +111,7 @@ scripts/create-admin.sh dev <username> <email> admin   # 最初の管理者を�
    gh api -X PUT repos/<owner>/<repo>/actions/oidc/customization/sub \
      --input - <<< '{"use_default":false,"include_claim_keys":["repo","context","ref"]}'
    ```
-3. Environments の `dev` と `prod` に変数を設定します: `AWS_DEPLOY_ROLE_ARN`（スタック出力）、`AWS_ACCOUNT_ID`、`AWS_REGION`、`MCPWIKI_DOMAINS`（任意）、`MCPWIKI_ALARM_EMAIL`。
+3. 準備が整ったら、リポジトリ変数 `DEPLOY_ENABLED=true` を設定します（設定するまで Deploy ワークフローはスキップされます）。Environments の `dev` と `prod` には次の変数を設定します: `AWS_DEPLOY_ROLE_ARN`（スタック出力）、`AWS_ACCOUNT_ID`、`AWS_REGION`、`MCPWIKI_DOMAINS`（任意）、`MCPWIKI_ALARM_EMAIL`。
 4. `prod` には **Required reviewers** と「自分の承認を禁止」を設定し、デプロイ元を `v*` タグに限定します。`dev` は `main` に限定します。
 5. ブランチ保護（PR 必須、CI / Security / CodeQL の成功を必須）、`v*` のタグ保護、Secret scanning と push protection、Private vulnerability reporting を有効にします。
 6. 任意: リポジトリ変数 `DEV_URL`（ZAP の対象）と、`ENABLE_AI_SECURITY_REVIEW=true` + シークレット `ANTHROPIC_API_KEY`（AI レビュー）を設定します。

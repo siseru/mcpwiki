@@ -111,7 +111,7 @@ Results are collected in GitHub's Security tab (code scanning). Every action is 
    gh api -X PUT repos/<owner>/<repo>/actions/oidc/customization/sub \
      --input - <<< '{"use_default":false,"include_claim_keys":["repo","context","ref"]}'
    ```
-3. Create the `dev` and `prod` environments and set these variables on each: `AWS_DEPLOY_ROLE_ARN` (from the stack outputs), `AWS_ACCOUNT_ID`, `AWS_REGION`, `MCPWIKI_DOMAINS` (optional) and `MCPWIKI_ALARM_EMAIL`.
+3. When ready, set the repository variable `DEPLOY_ENABLED=true`; until then the Deploy workflow is skipped. Create the `dev` and `prod` environments and set these variables on each: `AWS_DEPLOY_ROLE_ARN` (from the stack outputs), `AWS_ACCOUNT_ID`, `AWS_REGION`, `MCPWIKI_DOMAINS` (optional) and `MCPWIKI_ALARM_EMAIL`.
 4. On `prod`, set **Required reviewers**, enable "prevent self-review", and allow deployments only from `v*` tags. On `dev`, allow deployments only from `main`.
 5. Protect branches (require PRs, and require CI / Security / CodeQL to pass) and `v*` tags. Enable secret scanning with push protection, and private vulnerability reporting.
 6. Optional: set the repository variable `DEV_URL` as the ZAP target. For the AI review, set `ENABLE_AI_SECURITY_REVIEW=true` and the secret `ANTHROPIC_API_KEY`.

@@ -18,6 +18,9 @@ concurrency:
 
 jobs:
   build:
+    # Opt-in until the AWS side is set up (MCPWiki-ci stack, OIDC subject, environment variables):
+    # set the repository variable DEPLOY_ENABLED=true.
+    if: vars.DEPLOY_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: ${{ startsWith(github.ref, 'refs/tags/v') && 'prod' || 'dev' }}
