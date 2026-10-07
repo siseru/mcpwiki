@@ -33,7 +33,7 @@
     "@aws-sdk/client-secrets-manager": "^3.1147.0",
     "@aws-sdk/client-ssm": "^3.1147.0",
     "@aws-sdk/lib-dynamodb": "^3.1147.0",
-    "@types/node": "^24.19.1",
+    "@types/node": "^26.6.4",
     "aws-cdk": "^2.1144.0",
     "aws-cdk-lib": "^2.272.0",
     "cdk-nag": "^3.0.2",
