@@ -13,6 +13,12 @@ export interface CiStackProps extends StackProps {
    * (include_claim_keys: ["repo", "context", "ref"]); see README. Default true (fail closed).
    */
   subjectIncludesRef?: boolean;
+  /**
+   * Start of the OIDC "sub" claim. GitHub's immutable subjects use numeric ids
+   * ("repo:<owner>@<owner-id>/<repo>@<repo-id>", see `gh api repos/<owner>/<repo>/actions/oidc/customization/sub`),
+   * which survive renames and cannot be claimed by someone re-creating the same name. Default: "repo:<owner>/<repo>".
+   */
+  subjectPrefix?: string;
 }
 
 /**
@@ -27,13 +33,15 @@ export class CiStack extends Stack {
       ? iam.OpenIdConnectProvider.fromOpenIdConnectProviderArn(this, 'GitHub', props.existingOidcProviderArn)
       : new iam.OpenIdConnectProvider(this, 'GitHub', { url: 'https://token.actions.githubusercontent.com', clientIds: ['sts.amazonaws.com'] });
     const withRef = props.subjectIncludesRef ?? true;
+    const prefix = props.subjectPrefix ?? `repo:${props.githubRepo}`;
+    if (!/^repo:[A-Za-z0-9-]+(@\d+)?\/[A-Za-z0-9._-]+(@\d+)?$/.test(prefix)) throw new Error(`invalid OIDC subject prefix: ${prefix}`);
     const envs = {
       dev: { qualifier: DEV_QUALIFIER, ref: 'refs/heads/main' },
       prod: { qualifier: 'hnb659fds', ref: 'refs/tags/v*' },
     } as const;
 
     for (const [env, c] of Object.entries(envs) as [keyof typeof envs, (typeof envs)[keyof typeof envs]][]) {
-      const sub = `repo:${props.githubRepo}:environment:${env}${withRef ? `:ref:${c.ref}` : ''}`;
+      const sub = `${prefix}:environment:${env}${withRef ? `:ref:${c.ref}` : ''}`;
       const role = new iam.Role(this, `Deploy-${env}`, {
         roleName: `mcpwiki-github-deploy-${env}`,
         description: `GitHub Actions deploy role for MCPWiki ${env} (environment + ref scoped OIDC)`,
