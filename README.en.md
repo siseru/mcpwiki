@@ -140,10 +140,50 @@ If your browser runs on a different machine, sign in and then paste the final `h
 
 ## MCP
 
+The easiest way to connect an MCP client is the stdio bridge built into the CLI (`mcpwiki mcp`). It uses the CLI's stored credentials and refreshes tokens automatically. Sign in with the CLI first, so that `mcpwiki whoami` works:
+
 ```bash
+mcpwiki configure --env dev --url https://wiki-dev.example.com
 mcpwiki login --env dev
-claude mcp add mcpwiki -- mcpwiki mcp --env dev      # stdio bridge (recommended)
 ```
+
+### Claude Code
+
+```bash
+claude mcp add --scope user mcpwiki -- mcpwiki mcp --env dev
+claude mcp list            # mcpwiki should show as Connected
+```
+
+- `--scope user` makes the server available in every directory. Use `--scope project` to register it for one repository only.
+- Restart Claude Code after adding the server, then run `/mcp` to see the connection status and the tool list.
+- Example prompts: "Find the MCPWiki articles about istus and summarize them", "Write today's work up as a new MCPWiki article tagged worklog".
+
+### Kiro
+
+Add the server under `mcpServers` in `~/.kiro/settings/mcp.json` (all workspaces) or in the workspace's `.kiro/settings/mcp.json`. Keep any servers that are already there.
+
+```json
+{
+  "mcpServers": {
+    "mcpwiki": {
+      "command": "/usr/bin/node",
+      "args": ["/home/<user>/.local/bin/mcpwiki", "mcp", "--env", "dev"],
+      "disabled": false,
+      "autoApprove": ["list_articles", "get_article", "search_articles", "list_tags", "get_graph", "get_backlinks"]
+    }
+  }
+}
+```
+
+- Use **absolute paths** for `node` and `mcpwiki`, because Kiro may start servers without `~/.local/bin` on the PATH. `which node` and `which mcpwiki` print the paths.
+- Put only the read-only tools in `autoApprove`. Kiro will then ask before running `create_article` or `update_article`.
+- After saving, open MCP SERVERS in the Kiro panel and check that `mcpwiki` is connected and lists 8 tools. Reconnect if it doesn't.
+
+### Common notes
+
+- Articles created through MCP are saved as `draft`. After checking one, use "Mark as reviewed" in the web UI to record that a person reviewed it.
+- MCP cannot delete articles or widen read/write scopes. Only the web UI can do that.
+- If you see `session expired`, run `mcpwiki login` again. Refresh tokens are valid for 7 days.
 
 The remote endpoint is `https://<host>/mcp` (Streamable HTTP). Unauthenticated requests get a 401 with an RFC 9728 `WWW-Authenticate: Bearer resource_metadata=...` header. The authorization server is Cognito, using PKCE with the pre-registered client `cliClientId` and the callback `http://localhost:53682/callback`.
 

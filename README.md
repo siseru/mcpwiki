@@ -140,10 +140,50 @@ mcpwiki export --out bundle.zip   # 自分が読める記事の OKF バンドル
 
 ## MCP
 
+MCP クライアントからは、CLI に組み込まれた stdio ブリッジ（`mcpwiki mcp`）を使うのが簡単です。ブリッジは CLI に保存されたログイン情報を使い、トークンの更新も自動で行います。先に CLI でログインしてください（`mcpwiki whoami` が通る状態）。
+
 ```bash
+mcpwiki configure --env dev --url https://wiki-dev.example.com
 mcpwiki login --env dev
-claude mcp add mcpwiki -- mcpwiki mcp --env dev      # stdio ブリッジ（推奨）
 ```
+
+### Claude Code
+
+```bash
+claude mcp add --scope user mcpwiki -- mcpwiki mcp --env dev
+claude mcp list            # mcpwiki が Connected になっていることを確認
+```
+
+- `--scope user` を付けると、どのディレクトリで起動しても使えます（リポジトリ単位にしたい場合は `--scope project`）。
+- 登録後に Claude Code を起動し直し、`/mcp` で接続状態とツールの一覧を確認します。
+- 例:「MCPWiki で istus の記事を探して要約して」「今日の作業を MCPWiki に記事としてまとめて。タグは worklog」
+
+### Kiro
+
+`~/.kiro/settings/mcp.json`（全ワークスペース共通）か、ワークスペースの `.kiro/settings/mcp.json` の `mcpServers` に追加します。既存のサーバの設定は残してください。
+
+```json
+{
+  "mcpServers": {
+    "mcpwiki": {
+      "command": "/usr/bin/node",
+      "args": ["/home/<user>/.local/bin/mcpwiki", "mcp", "--env", "dev"],
+      "disabled": false,
+      "autoApprove": ["list_articles", "get_article", "search_articles", "list_tags", "get_graph", "get_backlinks"]
+    }
+  }
+}
+```
+
+- Kiro の起動環境では `~/.local/bin` が PATH に入っていないことがあるので、`node` と `mcpwiki` は**絶対パス**で書きます（`which node` と `which mcpwiki` で確認できます）。
+- `autoApprove` には読み取り用のツールだけを入れます。作成（`create_article`）と更新（`update_article`）は、実行前に Kiro が確認を求めます。
+- 保存したら、Kiro パネルの MCP SERVERS で `mcpwiki` が接続済みになり、8 個のツールが表示されることを確認します（表示されなければ再接続します）。
+
+### 共通の注意
+
+- MCP から作成した記事は `draft` として保存されます。内容を確認したら、Web 画面の「レビュー済みにする」で人による確認を記録してください。
+- MCP からは削除できず、閲覧・編集範囲を広げることもできません（Web 画面でのみ可能）。
+- `session expired` になったら `mcpwiki login` を実行し直します（リフレッシュトークンの有効期限は 7 日）。
 
 リモートのエンドポイントは `https://<host>/mcp`（Streamable HTTP）です。未認証のリクエストには、RFC 9728 の `WWW-Authenticate: Bearer resource_metadata=...` を付けて 401 を返します。認可サーバは Cognito（PKCE、事前登録クライアント `cliClientId`、コールバック `http://localhost:53682/callback`）です。
 
