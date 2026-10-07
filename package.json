@@ -1,0 +1,39 @@
+{
+  "name": "mcpwiki",
+  "version": "0.1.0",
+  "description": "Lightweight serverless wiki designed for LLM / MCP integration (OKF compatible)",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "bin": { "mcpwiki": "dist/cli/mcpwiki.mjs" },
+  "scripts": {
+    "build:ts": "tsc -p tsconfig.json",
+    "build:bundles": "node scripts/build.mjs",
+    "build": "npm run build:ts && npm run build:bundles",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "node scripts/lint.mjs",
+    "test": "npm run build && node --test build/test/",
+    "synth": "npm run build && cdk synth --quiet",
+    "deploy:dev": "npm run build && cdk deploy MCPWiki-dev-edge MCPWiki-dev",
+    "deploy:prod": "npm run build && cdk deploy MCPWiki-prod-edge MCPWiki-prod"
+  },
+  "dependencies": {
+    "dompurify": "3.4.16",
+    "marked": "18.1.0"
+  },
+  "devDependencies": {
+    "@aws-sdk/client-cognito-identity-provider": "^3.1147.0",
+    "@aws-sdk/client-dynamodb": "^3.1147.0",
+    "@aws-sdk/client-s3": "^3.1147.0",
+    "@aws-sdk/client-ssm": "^3.1147.0",
+    "@aws-sdk/lib-dynamodb": "^3.1147.0",
+    "@types/node": "^24.19.1",
+    "aws-cdk": "^2.1144.0",
+    "aws-cdk-lib": "^2.272.0",
+    "cdk-nag": "^3.0.2",
+    "constructs": "^10.4.2",
+    "esbuild": "^0.28.2",
+    "typescript": "~5.9.3"
+  }
+}

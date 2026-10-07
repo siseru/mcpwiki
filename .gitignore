@@ -1,0 +1,9 @@
+node_modules/
+build/
+dist/
+cdk.out/
+*.zip
+.env
+outputs*.json
+deploy-*.log
+config/*.local.json

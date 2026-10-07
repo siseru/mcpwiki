@@ -1,0 +1,8 @@
+{
+  "zoneName": "example.com",
+  "hostedZoneId": "Z0123456789EXAMPLE",
+  "hosts": {
+    "dev": "wiki-dev.example.com",
+    "prod": "wiki.example.com"
+  }
+}

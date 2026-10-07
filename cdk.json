@@ -1,0 +1,21 @@
+{
+  "app": "node build/src/infra/app.js",
+  "watch": {
+    "include": [
+      "src/**"
+    ]
+  },
+  "context": {
+    "region": "us-west-2",
+    "@aws-cdk/aws-lambda:recognizeLayerVersion": true,
+    "@aws-cdk/core:checkSecretUsage": true,
+    "@aws-cdk/aws-iam:minimizePolicies": true,
+    "@aws-cdk/aws-s3:createDefaultLoggingPolicy": true,
+    "@aws-cdk/aws-s3:serverAccessLogsUseBucketPolicy": true,
+    "@aws-cdk/aws-cloudfront:defaultSecurityPolicyTLSv1.2_2021": true,
+    "@aws-cdk/aws-apigateway:disableCloudWatchRole": true,
+    "@aws-cdk/core:enablePartitionLiterals": true,
+    "@aws-cdk/core:defaultCrossStackReferences": "strong"
+  },
+  "cli-telemetry": false
+}

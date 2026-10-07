@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Create (invite) a user in the MCPWiki user pool and add them to a group.
+# Usage: scripts/create-admin.sh <dev|prod> <username> <email> [admin|editor|viewer]
+set -euo pipefail
+env_name="${1:?env (dev|prod)}"; username="${2:?username}"; email="${3:?email}"; group="${4:-admin}"
+region="${AWS_REGION:-$(aws configure get region)}"
+pool_id="$(aws cloudformation describe-stacks --region "$region" --stack-name "MCPWiki-${env_name}" \
+  --query "Stacks[0].Outputs[?OutputKey=='UserPoolId'].OutputValue" --output text)"
+aws cognito-idp admin-create-user --region "$region" --user-pool-id "$pool_id" --username "$username" \
+  --user-attributes Name=email,Value="$email" Name=email_verified,Value=true \
+  --desired-delivery-mediums EMAIL --query 'User.Username' --output text
+aws cognito-idp admin-add-user-to-group --region "$region" --user-pool-id "$pool_id" --username "$username" --group-name "$group"
+echo "invited ${username} <${email}> as ${group}; a temporary password was emailed."
