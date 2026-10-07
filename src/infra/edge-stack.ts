@@ -1,8 +1,9 @@
 import {
-  CfnOutput, Duration, Stack, type StackProps,
+  ArnFormat, CfnOutput, Duration, RemovalPolicy, Stack, type StackProps,
   aws_certificatemanager as acm,
   aws_cloudwatch as cw,
   aws_cloudwatch_actions as cwActions,
+  aws_logs as logs,
   aws_route53 as route53,
   aws_sns as sns,
   aws_sns_subscriptions as subs,
@@ -41,6 +42,10 @@ export class EdgeStack extends Stack {
         zoneName: props.domain.zoneName,
         hostedZoneId: props.domain.hostedZoneId,
       });
+      // CAA: only Amazon (ACM) may issue certificates for the wiki and login host names.
+      const caa = [props.domain.host, `auth.${props.domain.host}`].map(
+        (name, i) => new route53.CaaAmazonRecord(this, `Caa${i}`, { zone, recordName: name }),
+      );
       // DNS validation records stay in Route 53, which is what lets ACM renew the certificate automatically.
       const cert = new acm.Certificate(this, 'Certificate', {
         domainName: props.domain.host,
@@ -48,6 +53,7 @@ export class EdgeStack extends Stack {
         validation: acm.CertificateValidation.fromDns(zone),
         certificateName: `mcpwiki-${props.envName}`,
       });
+      for (const c of caa) cert.node.addDependency(c);
       this.certificate = cert;
 
       // Alert if renewal ever fails (ACM normally renews ~60 days before expiry).
@@ -109,6 +115,15 @@ export class EdgeStack extends Stack {
         managed('AWSManagedRulesKnownBadInputsRuleSet', 3),
       ],
     });
+    // Request logs for incident response (WAF requires the "aws-waf-logs-" prefix). Credentials are redacted.
+    const logGroupName = `aws-waf-logs-mcpwiki-${envName}`;
+    const logGroup = new logs.LogGroup(this, 'WafLogs', { logGroupName, retention: logs.RetentionDays.THREE_MONTHS, removalPolicy: RemovalPolicy.DESTROY });
+    const logging = new waf.CfnLoggingConfiguration(this, 'WafLogging', {
+      resourceArn: acl.attrArn,
+      logDestinationConfigs: [this.formatArn({ service: 'logs', resource: 'log-group', resourceName: logGroupName, arnFormat: ArnFormat.COLON_RESOURCE_NAME })],
+      redactedFields: [{ singleHeader: { Name: 'authorization' } }, { singleHeader: { Name: 'cookie' } }],
+    });
+    logging.node.addDependency(logGroup);
     new CfnOutput(this, 'WebAclArn', { value: acl.attrArn });
     return acl.attrArn;
   }

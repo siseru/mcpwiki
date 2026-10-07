@@ -1,4 +1,6 @@
 // AWS Lambda entry point (API Gateway HTTP API, payload format 2.0).
+import { createHash } from 'node:crypto';
+import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 import { GetParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
 import { TokenVerifier, type Jwk } from './auth.js';
 import { createApp, type Req, type Res } from './app.js';
@@ -38,6 +40,14 @@ const region = env('AWS_REGION');
 const poolId = env('USER_POOL_ID');
 const issuer = `https://cognito-idp.${region}.amazonaws.com/${poolId}`;
 const ssm = new SSMClient({ region });
+const secretsManager = new SecretsManagerClient({ region });
+
+// Fetched at runtime (not via environment variables) so read-only principals cannot see it in the function config.
+async function originSecret(): Promise<string> {
+  const res = await secretsManager.send(new GetSecretValueCommand({ SecretId: env('ORIGIN_SECRET_ARN') }));
+  if (!res.SecretString) throw new Error('origin secret is empty');
+  return res.SecretString;
+}
 
 let configCache: { value: RuntimeConfig; at: number } | undefined;
 async function runtimeConfig(): Promise<RuntimeConfig> {
@@ -51,7 +61,7 @@ async function runtimeConfig(): Promise<RuntimeConfig> {
 let app: ((req: Req) => Promise<Res>) | undefined;
 async function getApp() {
   if (app) return app;
-  const cfg = await runtimeConfig();
+  const [cfg, secret] = await Promise.all([runtimeConfig(), originSecret()]);
   const store = new DynamoStore(env('TABLE_NAME'), env('BUCKET_NAME'), region);
   const verifier = new TokenVerifier({
     issuer,
@@ -67,12 +77,14 @@ async function getApp() {
     },
   });
   app = createApp({
-    service: new WikiService(store, new CognitoUserDirectory(poolId, region)),
+    service: new WikiService(store, new CognitoUserDirectory(poolId, region), undefined, {
+      cursorKey: createHash('sha256').update(`mcpwiki-cursor|${secret}`).digest(),
+    }),
     verifier,
     store,
     publicUrl: cfg.publicUrl,
     issuer,
-    originSecret: process.env.ORIGIN_SECRET || undefined,
+    originSecret: secret,
     rateLimit: { perMinute: Number(process.env.RATE_PER_MINUTE ?? 300), writesPerMinute: Number(process.env.WRITES_PER_MINUTE ?? 60) },
   });
   return app;

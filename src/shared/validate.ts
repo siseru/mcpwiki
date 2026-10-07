@@ -4,6 +4,7 @@ import { READ_SCOPES, STATUSES, WRITE_SCOPES } from './types.js';
 import { RESERVED_KEYS } from './okf.js';
 import { scopesValid } from './permissions.js';
 import { ID_RE } from './text.js';
+import { FORBIDDEN_KEYS } from './yaml.js';
 
 export const LIMITS = {
   titleChars: 200,
@@ -19,6 +20,8 @@ export const LIMITS = {
 const TAG_RE = /^[\p{L}\p{N}][\p{L}\p{N}_\-.+ ]*$/u;
 const EXTRA_KEY_RE = /^[A-Za-z_][A-Za-z0-9_-]{0,63}$/;
 const CONTROL_RE = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/;
+/** C1 controls and bidi overrides: allowed in bodies, rejected in single-line fields (spoofing / terminal escapes). */
+const LINE_UNSAFE_RE = /[\u0080-\u009f\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
 
 export class ValidationError extends Error {
   constructor(public readonly errors: string[]) {
@@ -29,6 +32,12 @@ export class ValidationError extends Error {
 
 export function normalizeTag(tag: string): string {
   return tag.normalize('NFKC').trim().replace(/\s+/g, ' ');
+}
+
+function hasForbiddenKey(v: JsonValue): boolean {
+  if (v === null || typeof v !== 'object') return false;
+  if (Array.isArray(v)) return v.some(hasForbiddenKey);
+  return Object.keys(v).some((k) => FORBIDDEN_KEYS.has(k)) || Object.values(v).some(hasForbiddenKey);
 }
 
 function jsonDepth(v: JsonValue, d = 0): number {
@@ -59,7 +68,7 @@ export function validateArticleInput(input: unknown, partial: boolean): ArticleI
     }
     const s = v.normalize('NFC').trim();
     if ([...s].length > max) errors.push(`${key} must be at most ${max} characters`);
-    if (CONTROL_RE.test(s) || /[\r\n]/.test(s)) errors.push(`${key} must not contain control characters or newlines`);
+    if (CONTROL_RE.test(s) || LINE_UNSAFE_RE.test(s) || /[\r\n]/.test(s)) errors.push(`${key} must not contain control characters or newlines`);
     return s;
   };
 
@@ -84,7 +93,7 @@ export function validateArticleInput(input: unknown, partial: boolean): ArticleI
       const tags = [...new Set((src.tags as string[]).map(normalizeTag).filter(Boolean))];
       if (tags.length > LIMITS.tags) errors.push(`at most ${LIMITS.tags} tags`);
       for (const t of tags) {
-        if ([...t].length > LIMITS.tagChars || !TAG_RE.test(t)) errors.push(`invalid tag "${t.slice(0, 60)}"`);
+        if ([...t].length > LIMITS.tagChars || !TAG_RE.test(t) || LINE_UNSAFE_RE.test(t)) errors.push(`invalid tag "${t.slice(0, 60)}"`);
       }
       out.tags = tags;
     }
@@ -130,6 +139,7 @@ export function validateArticleInput(input: unknown, partial: boolean): ArticleI
       }
       if (utf8Length(JSON.stringify(e)) > LIMITS.extraBytes) errors.push('extra is too large');
       if (jsonDepth(e) > 8) errors.push('extra is nested too deeply');
+      if (hasForbiddenKey(e)) errors.push('extra must not contain __proto__, constructor or prototype keys');
       out.extra = e;
     }
   }

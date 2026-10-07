@@ -13,19 +13,24 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
+      - name: Install (no install scripts)
+        run: npm ci --ignore-scripts
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
       - name: cdk synth (includes cdk-nag AwsSolutions checks)
-        run: npx cdk synth --quiet -c githubRepo=${{ github.repository }}
+        run: npx cdk synth --quiet -c githubRepo=${GITHUB_REPOSITORY}
         env:
           CDK_DEFAULT_ACCOUNT: '123456789012'
           CDK_DEFAULT_REGION: us-west-2
       - name: Audit runtime dependencies
         run: npm audit --omit=dev --audit-level=high
+      - name: Verify registry signatures of installed packages
+        run: npm audit signatures

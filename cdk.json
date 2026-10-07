@@ -15,7 +15,7 @@
     "@aws-cdk/aws-cloudfront:defaultSecurityPolicyTLSv1.2_2021": true,
     "@aws-cdk/aws-apigateway:disableCloudWatchRole": true,
     "@aws-cdk/core:enablePartitionLiterals": true,
-    "@aws-cdk/core:defaultCrossStackReferences": "strong"
-  },
-  "cli-telemetry": false
+    "@aws-cdk/core:defaultCrossStackReferences": "strong",
+    "cli-telemetry": false
+  }
 }

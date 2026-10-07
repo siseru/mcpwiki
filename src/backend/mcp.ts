@@ -1,5 +1,6 @@
 // MCP server over Streamable HTTP (stateless, JSON responses only, no SSE).
 // Spec: https://modelcontextprotocol.io/specification
+import { randomBytes } from 'node:crypto';
 import type { Principal } from '../shared/types.js';
 import { READ_SCOPES, STATUSES, WRITE_SCOPES } from '../shared/types.js';
 import { HttpError } from './errors.js';
@@ -87,7 +88,9 @@ export const TOOLS: ToolDef[] = [
         id: art.id, version: art.version, title: art.title, tags: art.tags, status: art.status, readScope: art.readScope,
         writeScope: art.writeScope, owner: art.ownerName, updatedAt: art.updatedAt, updatedBy: art.updatedBy, canEdit: art.canEdit,
       };
-      const text = `${json(meta)}\n\n${UNTRUSTED_NOTICE}\n<article-content id="${art.id}" version="${art.version}" trust="untrusted">\n${art.okf}\n</article-content>`;
+      // Random per-response boundary: article text cannot forge the end of the untrusted region.
+      const tag = `untrusted-article-${randomBytes(8).toString('hex')}`;
+      const text = `${json(meta)}\n\n${UNTRUSTED_NOTICE}\nThe document is between <${tag}> and </${tag}>.\n<${tag}>\n${art.okf}\n</${tag}>`;
       return { text, structured: { _notice: UNTRUSTED_NOTICE, ...meta, okf: art.okf } };
     },
   },

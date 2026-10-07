@@ -1,7 +1,7 @@
 // Business logic. Every entry point takes the calling Principal and enforces
 // permissions via src/shared/permissions.ts. Unreadable articles are reported
 // as "not found" so their existence is not revealed.
-import { randomBytes } from 'node:crypto';
+import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import type {
   Article, ArticleMeta, ArticleSummary, AuditEntry, Graph, GraphEdge, HistoryEntry, Principal, Role,
 } from '../shared/types.js';
@@ -31,15 +31,48 @@ export function newId(): string {
   return Array.from(bytes, (b) => alphabet[b % alphabet.length]).join('');
 }
 
-function encodeCursor(s: string): string {
-  return Buffer.from(s, 'utf8').toString('base64url');
+/** Cursors are AES-GCM encrypted so they never reveal ids/timestamps of articles the caller cannot read. */
+function encodeCursor(key: Buffer, s: string): string {
+  const iv = randomBytes(12);
+  const c = createCipheriv('aes-256-gcm', key, iv);
+  const ct = Buffer.concat([c.update(s, 'utf8'), c.final()]);
+  return Buffer.concat([iv, c.getAuthTag(), ct]).toString('base64url');
 }
 
-function decodeCursor(c: string | undefined): string | undefined {
+function decodeCursor(key: Buffer, c: string | undefined): string | undefined {
   if (!c) return undefined;
-  const s = Buffer.from(c, 'base64url').toString('utf8');
+  let s: string;
+  try {
+    const raw = Buffer.from(c, 'base64url');
+    const d = createDecipheriv('aes-256-gcm', key, raw.subarray(0, 12));
+    d.setAuthTag(raw.subarray(12, 28));
+    s = Buffer.concat([d.update(raw.subarray(28)), d.final()]).toString('utf8');
+  } catch {
+    throw badRequest('invalid cursor');
+  }
   if (!/^\d{4}-\d{2}-\d{2}T[\d:.]+Z#[a-z0-9-]+$/.test(s)) throw badRequest('invalid cursor');
   return s;
+}
+
+/** Serialize and prove the document parses back to the same body (never store an unreadable document). */
+function serializeChecked(meta: ArticleMeta, body: string): string {
+  const text = articleToOkf(meta, body);
+  try {
+    if (parseOkfDocument(text).body === body) return text;
+  } catch {
+    /* fall through */
+  }
+  throw badRequest('the article metadata contains values that cannot be stored safely');
+}
+
+/** Body of a stored document; tolerates a frontmatter we can no longer parse. */
+function bodyFromStored(text: string): string {
+  try {
+    return parseOkfDocument(text).body;
+  } catch {
+    const end = text.indexOf('\n---\n', 4);
+    return text.startsWith('---\n') && end > 0 ? text.slice(end + 5).replace(/^\n/, '') : text;
+  }
 }
 
 function clampInt(v: unknown, def: number, min: number, max: number): number {
@@ -74,11 +107,17 @@ export interface ImportReport {
 }
 
 export class WikiService {
+  private readonly cursorKey: Buffer;
+
   constructor(
     private readonly store: Store,
     private readonly users: UserDirectory,
     private readonly now: () => Date = () => new Date(),
-  ) {}
+    opts: { cursorKey?: Buffer } = {},
+  ) {
+    // Must be shared by all Lambda instances (derived from a deployment secret); random is fine for tests.
+    this.cursorKey = opts.cursorKey ?? randomBytes(32);
+  }
 
   private ts(): string {
     return this.now().toISOString();
@@ -113,7 +152,7 @@ export class WikiService {
   }
 
   private async bodyOf(m: ArticleMeta): Promise<string> {
-    return parseOkfDocument(await this.store.getBody(m.id, m.s3VersionId)).body;
+    return bodyFromStored(await this.store.getBody(m.id, m.s3VersionId));
   }
 
   /** All readable, non-deleted metas (bounded). */
@@ -139,7 +178,7 @@ export class WikiService {
     if (opts.deleted && !isAdmin(p)) throw forbidden('only admins can list deleted articles');
     const limit = clampInt(opts.limit, 50, 1, 200);
     const tag = opts.tag ? normalize(opts.tag) : undefined;
-    let after = decodeCursor(opts.cursor);
+    let after = decodeCursor(this.cursorKey, opts.cursor);
     const out: ArticleMeta[] = [];
     let scanned = 0;
     let more = true;
@@ -165,28 +204,35 @@ export class WikiService {
       }
     }
     const res: { items: ArticleSummary[]; cursor?: string } = { items: out.map((m) => this.summary(p, m)) };
-    if (more && after) res.cursor = encodeCursor(after);
+    if (more && after) res.cursor = encodeCursor(this.cursorKey, after);
     return res;
   }
   async get(p: Principal, id: string, version?: number): Promise<Article & { canEdit: boolean; okf: string }> {
     const m = await this.readable(p, id);
     if (version !== undefined && version !== m.version) {
       const h = await this.store.getHistory(id, version);
-      if (!h) throw notFound('version');
+      // A revision is only visible if it was readable under the scope it was written with (entries
+      // without a recorded scope are treated as owner-only).
+      if (!h || !canRead(p, { ...m, readScope: h.readScope ?? 'owner', deleted: false })) throw notFound('version');
       const text = await this.store.getBody(id, h.s3VersionId);
-      const f = okfToArticleFields(parseOkfDocument(text));
+      let f;
+      try {
+        f = okfToArticleFields(parseOkfDocument(text));
+      } catch {
+        f = { body: bodyFromStored(text), extra: {} } as ReturnType<typeof okfToArticleFields>;
+      }
       return {
         ...m, title: f.title ?? m.title, description: f.description ?? '', tags: f.tags ?? [], status: f.status ?? 'stable',
         version: h.version, updatedAt: h.updatedAt, updatedBy: h.updatedBy, body: f.body, canEdit: false, okf: text,
       };
     }
     const text = await this.store.getBody(id, m.s3VersionId);
-    return { ...m, body: parseOkfDocument(text).body, canEdit: canWrite(p, m), okf: text };
+    return { ...m, body: bodyFromStored(text), canEdit: canWrite(p, m), okf: text };
   }
 
   async history(p: Principal, id: string): Promise<HistoryEntry[]> {
-    await this.readable(p, id);
-    return this.store.listHistory(id, 100);
+    const m = await this.readable(p, id);
+    return (await this.store.listHistory(id, 100)).filter((h) => canRead(p, { ...m, readScope: h.readScope ?? 'owner', deleted: false }));
   }
 
   async backlinks(p: Principal, id: string): Promise<ArticleSummary[]> {
@@ -222,14 +268,18 @@ export class WikiService {
         }
       }
     }
-    // AND semantics first; fall back to partial matches.
-    let ids = [...scores.entries()].filter(([, s]) => s.matched === tokens.length);
-    if (!ids.length) ids = [...scores.entries()].filter(([, s]) => s.matched >= Math.max(1, Math.ceil(tokens.length / 2)));
-    ids.sort((a, b) => b[1].score - a[1].score);
-    const nq = normalize(q);
-    let metas = (await this.store.batchGetMeta(ids.slice(0, 300).map(([id]) => id))).filter(
+    // Filter by readability BEFORE choosing AND/partial matches and before truncating, so results never
+    // depend on articles the caller cannot read (no existence/content oracle).
+    const candidates = [...scores.entries()]
+      .sort((a, b) => b[1].matched - a[1].matched || b[1].score - a[1].score)
+      .slice(0, 2000)
+      .map(([id]) => id);
+    const readable = (await this.store.batchGetMeta(candidates)).filter(
       (m) => !m.deleted && canRead(p, m) && (!tag || m.tags.some((t) => normalize(t) === tag)),
     );
+    let metas = readable.filter((m) => scores.get(m.id)!.matched === tokens.length);
+    if (!metas.length) metas = readable.filter((m) => scores.get(m.id)!.matched >= Math.max(1, Math.ceil(tokens.length / 2)));
+    const nq = normalize(q);
     if (!metas.length) {
       // Substring fallback over titles/descriptions/tags (covers partial words and 1-char queries).
       const { items } = await this.allReadable(p);
@@ -272,7 +322,9 @@ export class WikiService {
           for (const b of backs[i]!) neighborIds.add(b);
         });
         for (const id of nodes.keys()) neighborIds.delete(id);
-        const metas = (await this.store.batchGetMeta([...neighborIds])).filter((m) => !m.deleted && canRead(p, m));
+        const ids = [...neighborIds];
+        if (ids.length > 500) truncated = true; // bound the work per request
+        const metas = (await this.store.batchGetMeta(ids.slice(0, 500))).filter((m) => !m.deleted && canRead(p, m));
         frontier = [];
         for (const m of metas) {
           if (nodes.size >= maxNodes) {
@@ -322,7 +374,10 @@ export class WikiService {
   }
 
   private historyEntry(m: ArticleMeta, p: Principal, action: HistoryEntry['action']): HistoryEntry {
-    return { id: m.id, version: m.version, s3VersionId: m.s3VersionId, title: m.title, updatedAt: m.updatedAt, updatedBy: p.username, via: p.via, action };
+    return {
+      id: m.id, version: m.version, s3VersionId: m.s3VersionId, title: m.title, updatedAt: m.updatedAt, updatedBy: p.username, via: p.via, action,
+      readScope: m.readScope,
+    };
   }
 
   private async reindexOne(m: ArticleMeta, body: string, prevLinks: string[]): Promise<void> {
@@ -355,11 +410,14 @@ export class WikiService {
       version: 1, createdAt: now, updatedAt: now, updatedBy: p.username, generatedBy: opts.generatedBy ?? this.actorFor(p),
       verified: [], extra: input.extra ?? {}, links: extractLinks(body, id), s3VersionId: '', deleted: false,
     };
-    meta.s3VersionId = await this.store.putBody(id, articleToOkf(meta, body));
+    const text = serializeChecked(meta, body);
+    // Reserve-check before writing to S3 so a taken id never gets a foreign object version.
+    if (await this.store.getMeta(id)) throw new HttpError(409, 'conflict', `the id "${id}" is not available`);
+    meta.s3VersionId = await this.store.putBody(id, text);
     try {
       await this.store.createMeta(meta, this.historyEntry(meta, p, opts.action ?? 'create'));
     } catch (e) {
-      if (e instanceof ConflictError) throw new HttpError(409, 'conflict', `an article with id "${id}" already exists`);
+      if (e instanceof ConflictError) throw new HttpError(409, 'conflict', `the id "${id}" is not available`);
       throw e;
     }
     await this.afterWrite(meta, body, []);
@@ -400,8 +458,10 @@ export class WikiService {
     const writeScope = input.writeScope ?? cur.writeScope;
     if (readScope !== cur.readScope || writeScope !== cur.writeScope) {
       if (!canChangePermissions(p, cur)) throw forbidden('only the owner or an admin can change permissions');
-      if (p.via === 'mcp' && (isReadScopeWider(readScope, cur.readScope) || isWriteScopeWider(writeScope, cur.writeScope))) {
-        throw forbidden('permissions cannot be widened via MCP; use the web UI');
+      // Tokens usable by agents (CLI / MCP / API) may only narrow permissions: a prompt-injected agent
+      // with shell access could otherwise publish private articles through the CLI.
+      if (p.via !== 'web' && (isReadScopeWider(readScope, cur.readScope) || isWriteScopeWider(writeScope, cur.writeScope))) {
+        throw forbidden('permissions can only be widened from the web UI');
       }
       if (!scopesValid(readScope, writeScope)) throw badRequest('writeScope must not be wider than readScope');
     }
@@ -424,7 +484,7 @@ export class WikiService {
     };
     const contentChanged = input.body !== undefined || next.title !== cur.title || next.description !== cur.description;
     if (contentChanged) next.verified = []; // verification applied to the previous content
-    next.s3VersionId = await this.store.putBody(id, articleToOkf(next, body));
+    next.s3VersionId = await this.store.putBody(id, serializeChecked(next, body));
     try {
       await this.store.updateMeta(next, cur.version, this.historyEntry(next, p, opts.action ?? 'update'));
     } catch (e) {
@@ -441,7 +501,7 @@ export class WikiService {
     const body = await this.bodyOf(cur);
     const next: ArticleMeta = { ...cur, version: cur.version + 1, updatedAt: this.ts(), updatedBy: p.username };
     change(next);
-    next.s3VersionId = await this.store.putBody(cur.id, articleToOkf(next, body));
+    next.s3VersionId = await this.store.putBody(cur.id, serializeChecked(next, body));
     try {
       await this.store.updateMeta(next, cur.version, this.historyEntry(next, p, action));
     } catch (e) {
@@ -481,6 +541,7 @@ export class WikiService {
     if (p.role === 'viewer') throw forbidden('viewers cannot verify articles');
     const cur = await this.readable(p, id);
     if (cur.deleted) throw notFound();
+    if (!canWrite(p, cur)) throw forbidden('you can only verify articles you can edit');
     return this.mutate(p, cur, 'verify', (m) => {
       m.verified = [...cur.verified.filter((v) => v.by !== `human:${p.username}`), { by: `human:${p.username}`, at: m.updatedAt }];
     });
@@ -549,7 +610,7 @@ export class WikiService {
   /** Rebuild search postings and backlinks (admin backfill). Processes one page per call. */
   async reindex(p: Principal, cursor?: string): Promise<{ processed: number; failed: string[]; cursor?: string }> {
     if (!isAdmin(p)) throw forbidden();
-    const page = await this.store.listMetas({ deleted: false, after: decodeCursor(cursor), limit: 25 });
+    const page = await this.store.listMetas({ deleted: false, after: decodeCursor(this.cursorKey, cursor), limit: 25 });
     const failed: string[] = [];
     for (const m of page.items) {
       try {
@@ -562,7 +623,7 @@ export class WikiService {
     }
     await this.audit(p, 'reindex', undefined, `${page.items.length} processed, ${failed.length} failed`);
     const res: { processed: number; failed: string[]; cursor?: string } = { processed: page.items.length, failed };
-    if (page.next) res.cursor = encodeCursor(page.next);
+    if (page.next) res.cursor = encodeCursor(this.cursorKey, page.next);
     return res;
   }
 
@@ -606,6 +667,9 @@ export class WikiService {
     if (!u) throw notFound('user');
     if (u.sub === p.sub) throw badRequest('you cannot change your own role or status');
     const changes: string[] = [];
+    // Revoke before AND after the Cognito changes (minIat = now + 1): a token minted mid-change must not survive.
+    const revoke = (disabled: boolean) => this.store.putUserState(u.sub, { disabled, minIat: Math.floor(this.now().getTime() / 1000) + 1 });
+    await revoke(r.enabled === false || !u.enabled);
     if (r.role !== undefined) {
       if (!(ROLES as readonly unknown[]).includes(r.role)) throw badRequest(`role must be one of ${ROLES.join(', ')}`);
       await this.users.setRole(username, r.role as Role);
@@ -618,7 +682,7 @@ export class WikiService {
     }
     if (!changes.length) throw badRequest('nothing to change');
     // Invalidate tokens issued before this change (role is read from the token).
-    await this.store.putUserState(u.sub, { disabled: r.enabled === false || (r.enabled === undefined && !u.enabled), minIat: Math.floor(this.now().getTime() / 1000) });
+    await revoke(r.enabled === false || (r.enabled === undefined && !u.enabled));
     await this.audit(p, 'user.update', undefined, `${username}: ${changes.join(', ')}`);
     return (await this.users.get(username))!;
   }

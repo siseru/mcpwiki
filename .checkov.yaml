@@ -1,0 +1,29 @@
+# checkov configuration for the synthesized CloudFormation templates (cdk.out).
+# Every skip carries the reason; anything not listed here fails the "Security / iac" job.
+framework:
+  - cloudformation
+quiet: true
+compact: true
+skip-check:
+  # Encryption with customer-managed KMS keys: AWS-owned/managed keys are used on purpose (cost; no
+  # cross-account key sharing). Data is encrypted at rest in every case.
+  - CKV_AWS_119 # DynamoDB CMK
+  - CKV_AWS_149 # Secrets Manager CMK
+  - CKV_AWS_158 # CloudWatch Logs CMK
+  - CKV_AWS_166 # Backup vault CMK
+  - CKV_AWS_173 # Lambda env encryption (no secrets in env; the origin secret is fetched at runtime)
+  - CKV_AWS_26  # SNS topics carry alarm notifications only (SSE breaks CloudWatch publishing with aws/sns)
+  # Lambda: serverless design without a VPC (no private resources to reach); synchronous API, no async
+  # invocations to dead-letter. The API function has reserved concurrency; CDK custom resources are deploy-time only.
+  - CKV_AWS_117
+  - CKV_AWS_116
+  - CKV_AWS_115
+  # S3: the web bucket is fully regenerated on every deploy and the logs bucket is the access-log sink.
+  - CKV_AWS_21
+  - CKV_AWS_18
+  # WAF is attached in prod only (cost); dev relies on throttling, reserved concurrency and per-user rate limits.
+  - CKV_AWS_68
+  # Flagged on the dev permissions boundary (an upper bound, not a grant), the CDK BucketDeployment policy and
+  # the CDK OIDC-provider custom resource; reviewed in docs/security.md.
+  - CKV_AWS_111
+  - CKV_AWS_109

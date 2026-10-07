@@ -1,0 +1,145 @@
+name: Security
+
+# Continuous security review: every PR, every push to main, and weekly (catches newly published CVEs).
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '23 2 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  secrets:
+    name: Secret scan (gitleaks, full history)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: gitleaks
+        run: |
+          docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:v8.30.1 \
+            git /repo --redact --exit-code 1 --report-format sarif --report-path /repo/gitleaks.sarif
+      - if: always()
+        uses: github/codeql-action/upload-sarif@1190a975f95ce23525efb6a3fc21ea29567c1b52 # v3.38.2
+        with:
+          sarif_file: gitleaks.sarif
+          category: gitleaks
+
+  dependencies:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4.9.0
+        with:
+          fail-on-severity: moderate
+          comment-summary-in-pr: on-failure
+
+  iac:
+    name: IaC scan (cdk-nag + checkov on synthesized templates)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Synthesize (with an example custom domain so all resources are scanned)
+        run: npm run build && npx cdk synth --quiet -c githubRepo=${GITHUB_REPOSITORY}
+        env:
+          CDK_DEFAULT_ACCOUNT: '123456789012'
+          CDK_DEFAULT_REGION: us-west-2
+          MCPWIKI_DOMAINS: '{"zoneName":"example.com","hostedZoneId":"Z0123456789EXAMPLE","hosts":{"dev":"wiki-dev.example.com","prod":"wiki.example.com"}}'
+      - name: checkov
+        run: |
+          pipx run --spec 'checkov==3.3.25' checkov --config-file .checkov.yaml -d cdk.out \
+            --output cli --output sarif --output-file-path console,checkov.sarif
+      - if: always()
+        uses: github/codeql-action/upload-sarif@1190a975f95ce23525efb6a3fc21ea29567c1b52 # v3.38.2
+        with:
+          sarif_file: checkov.sarif
+          category: checkov
+
+  workflows:
+    name: GitHub Actions audit (zizmor)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: zizmor
+        run: pipx run 'zizmor==1.30.1' --format sarif .github/workflows > zizmor.sarif
+      - if: always()
+        uses: github/codeql-action/upload-sarif@1190a975f95ce23525efb6a3fc21ea29567c1b52 # v3.38.2
+        with:
+          sarif_file: zizmor.sarif
+          category: zizmor
+      - name: zizmor (fail on findings)
+        run: pipx run 'zizmor==1.30.1' --min-severity medium .github/workflows
+
+  dast:
+    name: DAST baseline against dev (OWASP ZAP, passive)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      TARGET: ${{ vars.DEV_URL }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: ZAP baseline (report only)
+        if: env.TARGET != ''
+        run: |
+          mkdir -p zap && chmod 777 zap
+          docker run --rm -v "$PWD/zap:/zap/wrk" ghcr.io/zaproxy/zaproxy:stable \
+            zap-baseline.py -t "$TARGET" -r zap-report.html -J zap-report.json -I || true
+      - if: always() && env.TARGET != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: zap-report
+          path: zap/
+
+  ai-review:
+    name: AI security review (Claude)
+    # Opt-in: set repository variable ENABLE_AI_SECURITY_REVIEW=true and secret ANTHROPIC_API_KEY.
+    # Never runs for forks (no secrets) and only reads the PR diff.
+    if: github.event_name == 'pull_request' && vars.ENABLE_AI_SECURITY_REVIEW == 'true' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - uses: anthropics/claude-code-security-review@0c6a49f1fa56a1d472575da86a94dbc1edb78eda # main (2026-10)
+        with:
+          claude-api-key: ${{ secrets.ANTHROPIC_API_KEY }}
+          comment-pr: true

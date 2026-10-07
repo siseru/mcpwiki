@@ -51,20 +51,29 @@ export function indexTerms(title: string, tags: string[], description: string, b
   return Object.fromEntries(sorted);
 }
 
+// All patterns below run on user-controlled bodies (up to 256KB), so every quantifier
+// is bounded and stops at newlines to keep matching linear (no catastrophic backtracking).
+const MD_IMAGE_RE = /!\[([^\]\n]{0,500})\]\([^)\n]{0,2000}\)/g;
+const MD_LINK_RE = /\[([^\]\n]{0,500})\]\([^)\n]{0,2000}\)/g;
+const MD_REFDEF_RE = /^ {0,3}\[[^\]\n]{1,500}\]:[^\n]*$/gm;
+const HTML_TAG_RE = /<[^<>\n]{0,500}>/g;
+
 /** Rough markdown -> text for indexing and snippets (link URLs removed, code kept). */
 export function stripMarkdown(md: string): string {
   return md
-    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
-    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
-    .replace(/^\s{0,3}\[[^\]]+\]:\s*\S+.*$/gm, '')
-    .replace(/<[^>]+>/g, ' ')
+    .replace(MD_IMAGE_RE, '$1')
+    .replace(MD_LINK_RE, '$1')
+    .replace(MD_REFDEF_RE, '')
+    .replace(HTML_TAG_RE, ' ')
     .replace(/[#>*_~`|]+/g, ' ')
     .replace(/[ \t]+/g, ' ');
 }
 
+export const MAX_SNIPPET_SOURCE_CHARS = 20_000;
+
 /** Short excerpt around the first query token. */
 export function snippet(body: string, query: string, length = 160): string {
-  const text = stripMarkdown(body).replace(/\s+/g, ' ').trim();
+  const text = stripMarkdown(body.slice(0, MAX_SNIPPET_SOURCE_CHARS)).replace(/\s+/g, ' ').trim();
   const lower = normalize(text);
   let at = -1;
   for (const t of tokenize(query)) {
@@ -76,9 +85,23 @@ export function snippet(body: string, query: string, length = 160): string {
   return (start > 0 ? '…' : '') + s + (start + s.length < text.length ? '…' : '');
 }
 
-/** Remove fenced and inline code so links inside code are ignored. */
+/** Remove fenced and inline code so links inside code are ignored (line scanner, linear time). */
 function stripCode(md: string): string {
-  return md.replace(/^(\s*)(```|~~~)[^\n]*\n[\s\S]*?^\1\2[^\n]*$/gm, '').replace(/`[^`\n]*`/g, '');
+  const out: string[] = [];
+  let fence: string | null = null;
+  for (const line of md.split('\n')) {
+    const m = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (fence) {
+      if (m && m[1]!.startsWith(fence)) fence = null;
+      continue;
+    }
+    if (m) {
+      fence = m[1]!;
+      continue;
+    }
+    out.push(line.replace(/`[^`\n]{0,2000}`/g, ''));
+  }
+  return out.join('\n');
 }
 
 /**
@@ -88,8 +111,8 @@ function stripCode(md: string): string {
 export function extractLinks(body: string, selfId?: string, max = 200): string[] {
   const md = stripCode(body);
   const targets: string[] = [];
-  for (const m of md.matchAll(/\]\(\s*<?([^)\s>]+)/g)) targets.push(m[1]!);
-  for (const m of md.matchAll(/^\s{0,3}\[[^\]]+\]:\s*<?(\S+?)>?(?:\s|$)/gm)) targets.push(m[1]!);
+  for (const m of md.matchAll(/\]\([ \t]{0,10}<?([^)\s>]{1,2000})/g)) targets.push(m[1]!);
+  for (const m of md.matchAll(/^ {0,3}\[[^\]\n]{1,500}\]:[ \t]{0,10}<?([^\s>]{1,2000})/gm)) targets.push(m[1]!);
   const ids = new Set<string>();
   for (const raw of targets) {
     const id = linkTargetToId(raw);

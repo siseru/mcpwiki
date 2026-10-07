@@ -66,6 +66,12 @@ function secretMatches(given: string | undefined, expected: string): boolean {
 }
 
 const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+const MCP_WRITE_TOOLS = new Set(['create_article', 'update_article']);
+
+function isMcpWrite(msg: unknown): boolean {
+  const m = msg as { method?: unknown; params?: { name?: unknown } } | null;
+  return !!m && m.method === 'tools/call' && MCP_WRITE_TOOLS.has(String(m.params?.name));
+}
 
 type Handler = (p: Principal, req: Req, params: string[]) => Promise<Res>;
 interface Route {
@@ -147,7 +153,16 @@ export function createApp(d: AppDeps): (req: Req) => Promise<Res> {
     {
       method: 'PUT',
       re: /^\/api\/admin\/users\/([^/]+)$/,
-      handler: async (p, r, [u]) => (webOnly(p), json(200, await svc.updateUser(p, decodeURIComponent(u!), parseJson(r)))),
+      handler: async (p, r, [u]) => {
+        webOnly(p);
+        let username: string;
+        try {
+          username = decodeURIComponent(u!);
+        } catch {
+          throw badRequest('invalid username');
+        }
+        return json(200, await svc.updateUser(p, username, parseJson(r)));
+      },
     },
     { method: 'GET', re: /^\/api\/admin\/audit$/, handler: async (p, r) => (webOnly(p), json(200, { items: await svc.listAudit(p, r.query.date) })) },
     {
@@ -164,7 +179,7 @@ export function createApp(d: AppDeps): (req: Req) => Promise<Res> {
         return json(200, await svc.importBundle(p, r.body ?? Buffer.alloc(0)));
       },
     },
-    { method: 'POST', re: /^\/api\/admin\/reindex$/, handler: async (p, r) => json(200, await svc.reindex(p, (parseJson(r) as { cursor?: string }).cursor)) },
+    { method: 'POST', re: /^\/api\/admin\/reindex$/, handler: async (p, r) => (webOnly(p), json(200, await svc.reindex(p, (parseJson(r) as { cursor?: string }).cursor))) },
   ];
 
   return async (req: Req): Promise<Res> => {
@@ -182,7 +197,12 @@ export function createApp(d: AppDeps): (req: Req) => Promise<Res> {
       }
     }
     console.log(
-      JSON.stringify({ msg: 'request', requestId: req.requestId, method: req.method, path: req.path, status: res.status, ms: Date.now() - started, user: principal?.username, via: principal?.via }),
+      JSON.stringify({
+        msg: 'request', requestId: req.requestId, method: req.method, path: req.path, status: res.status, ms: Date.now() - started,
+        user: principal?.username, via: principal?.via,
+        // Set by the CloudFront viewer-request function (overwrites any client-supplied value).
+        ip: req.headers['x-viewer-address']?.slice(0, 64),
+      }),
     );
     return res;
 
@@ -204,18 +224,21 @@ export function createApp(d: AppDeps): (req: Req) => Promise<Res> {
       }
       principal = await d.verifier.authenticate(r.headers.authorization, r.path);
       const p = principal;
-      if (d.rateLimit) {
-        const okAll = await d.store.hit(`all#${p.sub}`, 60, d.rateLimit.perMinute);
-        const okWrite = !WRITE_METHODS.has(r.method) || r.path === '/mcp' || (await d.store.hit(`w#${p.sub}`, 60, d.rateLimit.writesPerMinute));
-        if (!okAll || !okWrite) throw new HttpError(429, 'rate_limited', 'too many requests; slow down', { retryAfterSeconds: 60 });
-      }
+      let msg: unknown;
       if (r.path === '/mcp') {
-        let msg: unknown;
         try {
           msg = JSON.parse((r.body ?? Buffer.alloc(0)).toString('utf8'));
         } catch {
           return json(400, { jsonrpc: '2.0', id: null, error: { code: -32700, message: 'parse error' } });
         }
+      }
+      if (d.rateLimit) {
+        const okAll = await d.store.hit(`all#${p.sub}`, 60, d.rateLimit.perMinute);
+        const isWrite = r.path === '/mcp' ? isMcpWrite(msg) : WRITE_METHODS.has(r.method);
+        const okWrite = !isWrite || (await d.store.hit(`w#${p.sub}`, 60, d.rateLimit.writesPerMinute));
+        if (!okAll || !okWrite) throw new HttpError(429, 'rate_limited', 'too many requests; slow down', { retryAfterSeconds: 60 });
+      }
+      if (r.path === '/mcp') {
         const out = await handleMcpMessage(svc, p, msg, r.headers['mcp-protocol-version']);
         if (out.body === undefined) return { status: out.status, headers: { ...BASE_HEADERS }, body: '' };
         return json(out.status, out.body);

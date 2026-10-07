@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import {
   Arn, CfnOutput, Duration, Fn, RemovalPolicy, Stack, type StackProps,
   aws_apigatewayv2 as apigw,
+  aws_backup as backup,
   aws_apigatewayv2_integrations as integrations,
   aws_cloudfront as cf,
   aws_certificatemanager as acm,
@@ -96,6 +97,37 @@ export class WikiStack extends Stack {
       projectionType: ddb.ProjectionType.ALL,
     });
 
+    if (prod) {
+      // Independent, locked recovery point store: even an attacker who obtains admin cannot delete
+      // recovery points before minRetention (vault lock, governance mode).
+      const vault = new backup.BackupVault(this, 'BackupVault', {
+        backupVaultName: 'mcpwiki-prod',
+        lockConfiguration: { minRetention: Duration.days(7) },
+        removalPolicy: RemovalPolicy.RETAIN,
+      });
+      const plan = backup.BackupPlan.daily35DayRetention(this, 'BackupPlan', vault);
+      const backupRole = new iam.Role(this, 'BackupRole', {
+        assumedBy: new iam.ServicePrincipal('backup.amazonaws.com'),
+        managedPolicies: [
+          'service-role/AWSBackupServiceRolePolicyForBackup',
+          'service-role/AWSBackupServiceRolePolicyForRestores',
+          'AWSBackupServiceRolePolicyForS3Backup',
+          'AWSBackupServiceRolePolicyForS3Restore',
+        ].map((n) => iam.ManagedPolicy.fromAwsManagedPolicyName(n)),
+      });
+      plan.addSelection('Data', {
+        role: backupRole,
+        disableDefaultBackupPolicy: true,
+        resources: [backup.BackupResource.fromDynamoDbTable(table), backup.BackupResource.fromArn(contentBucket.bucketArn)],
+      });
+      acknowledge(backupRole, [
+        { id: 'AwsSolutions-IAM4[Policy::arn:<AWS::Partition>:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForBackup]', reason: 'AWS Backup service role.' },
+        { id: 'AwsSolutions-IAM4[Policy::arn:<AWS::Partition>:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForRestores]', reason: 'AWS Backup service role.' },
+        { id: 'AwsSolutions-IAM4[Policy::arn:<AWS::Partition>:iam::aws:policy/AWSBackupServiceRolePolicyForS3Backup]', reason: 'Required for S3 backups.' },
+        { id: 'AwsSolutions-IAM4[Policy::arn:<AWS::Partition>:iam::aws:policy/AWSBackupServiceRolePolicyForS3Restore]', reason: 'Required for S3 restores.' },
+      ]);
+    }
+
     // ---------------------------------------------------------------- auth
     const userPool = new cognito.UserPool(this, 'Users', {
       userPoolName: `mcpwiki-${envName}`,
@@ -115,6 +147,8 @@ export class WikiStack extends Stack {
         tempPasswordValidity: Duration.days(3),
       },
       accountRecovery: cognito.AccountRecovery.EMAIL_ONLY,
+      // An attacker with a session cannot silently re-point the sign-in e-mail.
+      keepOriginal: { email: true },
       featurePlan: cognito.FeaturePlan.ESSENTIALS,
       userInvitation: {
         emailSubject: `MCPWiki (${envName}) への招待`,
@@ -148,6 +182,8 @@ export class WikiStack extends Stack {
       handler: 'index.handler',
       code: lambda.Code.fromAsset(dist('backend')),
       memorySize: 512,
+      // Caps the blast radius of a flood (e.g. against dev) on the account-wide concurrency pool.
+      reservedConcurrentExecutions: prod ? 100 : 20,
       timeout: Duration.seconds(25),
       logGroup: apiLogGroup,
       environment: {
@@ -155,7 +191,7 @@ export class WikiStack extends Stack {
         BUCKET_NAME: contentBucket.bucketName,
         USER_POOL_ID: userPool.userPoolId,
         CONFIG_PARAM: configParamName,
-        ORIGIN_SECRET: originSecret.secretValue.unsafeUnwrap(),
+        ORIGIN_SECRET_ARN: originSecret.secretArn,
         RATE_PER_MINUTE: '300',
         WRITES_PER_MINUTE: '60',
       },
@@ -187,6 +223,7 @@ export class WikiStack extends Stack {
         resources: [userPool.userPoolArn],
       }),
     );
+    originSecret.grantRead(fn);
     fn.addToRolePolicy(
       new iam.PolicyStatement({
         actions: ['ssm:GetParameter'],
@@ -224,18 +261,20 @@ export class WikiStack extends Stack {
         `function handler(event) { var r = event.request; ${canonical}var u = r.uri; if (u.indexOf('/assets/') !== 0 && u !== '/config.json') { r.uri = '/index.html'; } return r; }`,
       ),
     });
-    const apiCanonical = custom
-      ? new cf.Function(this, 'ApiCanonicalHost', {
-          runtime: cf.FunctionRuntime.JS_2_0,
-          comment: 'Canonical host redirect for API / MCP',
-          code: cf.FunctionCode.fromInline(`function handler(event) { var r = event.request; ${canonical}return r; }`),
-        })
-      : undefined;
+    // Viewer-request function for API / MCP: canonical-host redirect (custom domain) and the real client IP
+    // for logs (API Gateway only sees CloudFront edge addresses). Overwrites any client-supplied value.
+    const apiViewer = new cf.Function(this, 'ApiViewerRequest', {
+      runtime: cf.FunctionRuntime.JS_2_0,
+      comment: 'Canonical host redirect + viewer address header for API / MCP',
+      code: cf.FunctionCode.fromInline(
+        `function handler(event) { var r = event.request; ${canonical}r.headers['x-viewer-address'] = { value: event.viewer.ip }; return r; }`,
+      ),
+    });
     const csp = [
       "default-src 'self'",
       "script-src 'self'",
       "style-src 'self'",
-      "img-src 'self' https: data:",
+      "img-src 'self' data:", // no third-party images: attacker-authored Markdown cannot beacon readers
       `connect-src 'self' ${cognitoUrl}`,
       "font-src 'self'",
       "object-src 'none'",
@@ -273,7 +312,7 @@ export class WikiStack extends Stack {
       originRequestPolicy: cf.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
       responseHeadersPolicy: headers,
       compress: true,
-      functionAssociations: apiCanonical ? [{ function: apiCanonical, eventType: cf.FunctionEventType.VIEWER_REQUEST }] : undefined,
+      functionAssociations: [{ function: apiViewer, eventType: cf.FunctionEventType.VIEWER_REQUEST }],
     };
     const distribution = new cf.Distribution(this, 'Cdn', {
       comment: `MCPWiki ${envName}`,
@@ -325,7 +364,7 @@ export class WikiStack extends Stack {
     const webClient = userPool.addClient('WebClient', {
       userPoolClientName: 'web',
       generateSecret: false,
-      authFlows: { userSrp: true },
+      writeAttributes: new cognito.ClientAttributes(), // users cannot self-modify attributes (e.g. e-mail alias)
       oAuth: { flows: { authorizationCodeGrant: true }, scopes, callbackUrls: [`${publicUrl}/callback`], logoutUrls: [`${publicUrl}/`] },
       supportedIdentityProviders: [cognito.UserPoolClientIdentityProvider.COGNITO],
       accessTokenValidity: Duration.minutes(60),
@@ -337,7 +376,7 @@ export class WikiStack extends Stack {
     const cliClient = userPool.addClient('CliClient', {
       userPoolClientName: 'cli-mcp',
       generateSecret: false,
-      authFlows: { userSrp: true },
+      writeAttributes: new cognito.ClientAttributes(), // users cannot self-modify attributes (e.g. e-mail alias)
       oAuth: { flows: { authorizationCodeGrant: true }, scopes, callbackUrls: [CLI_REDIRECT_URI], logoutUrls: ['http://localhost:53682/'] },
       supportedIdentityProviders: [cognito.UserPoolClientIdentityProvider.COGNITO],
       accessTokenValidity: Duration.minutes(60),
@@ -347,6 +386,8 @@ export class WikiStack extends Stack {
       preventUserExistenceErrors: true,
     });
     for (const [name, c] of [['web', webClient], ['cli', cliClient]] as const) {
+      // Managed login + PKCE only: no SRP/password APIs (their tokens carry aws.cognito.signin.user.admin).
+      (c.node.defaultChild as cognito.CfnUserPoolClient).explicitAuthFlows = ['ALLOW_REFRESH_TOKEN_AUTH'];
       c.node.addDependency(domain);
       new cognito.CfnManagedLoginBranding(this, `LoginBranding-${name}`, {
         userPoolId: userPool.userPoolId,
@@ -426,7 +467,7 @@ export class WikiStack extends Stack {
           reason: 'CDK-managed BucketDeployment copies assets into the web bucket (scoped to the asset and web buckets).',
         })),
         { id: 'AwsSolutions-IAM5[Resource::*]', reason: 'CDK-managed BucketDeployment (CloudFront invalidation has no resource-level permissions).' },
-        { id: `AwsSolutions-IAM5[Resource::arn:aws:s3:::cdk-hnb659fds-assets-${this.account}-${this.region}/*]`, reason: 'CDK asset bucket.' },
+        ...['hnb659fds', 'mwdev'].map((q) => ({ id: `AwsSolutions-IAM5[Resource::arn:aws:s3:::cdk-${q}-assets-${this.account}-${this.region}/*]`, reason: 'CDK asset bucket.' })),
         { id: `AwsSolutions-IAM5[Resource::<${this.getLogicalId(webBucket.node.defaultChild as s3.CfnBucket)}.Arn>/*]`, reason: 'Deploys the web app into the web bucket.' },
         { id: 'AwsSolutions-L1', reason: 'CDK-managed custom resource runtime.' },
       ]);

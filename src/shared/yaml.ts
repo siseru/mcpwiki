@@ -14,7 +14,7 @@ export class YamlError extends Error {
   }
 }
 
-const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+export const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 const MAX_DEPTH = 32;
 
 interface Peeked {
@@ -108,7 +108,7 @@ class BlockParser {
         this.i++;
         const next = this.peek();
         arr.push(next && next.indent > indent ? this.parseBlock(next.indent, depth + 1) : null);
-      } else if (isSeqItem(rest) || (splitKey(rest) && !/^[[{"']/.test(rest))) {
+      } else if (isSeqItem(rest) || (splitKey(rest) && !/^[[{]/.test(rest))) {
         // "- key: v" or "- - x": re-read this line as a nested block at itemIndent.
         this.lines[this.i] = ' '.repeat(itemIndent) + rest;
         arr.push(this.parseBlock(itemIndent, depth + 1));

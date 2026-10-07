@@ -96,7 +96,7 @@ test('permission scopes: invisible articles look missing', async () => {
 
 test('delete / restore / verify / admin endpoints are web-only', async () => {
   const { call } = setup();
-  await call(users.alice, 'POST', '/api/articles', { id: 'd', title: 'D', body: 'b' });
+  await call(users.alice, 'POST', '/api/articles', { id: 'd', title: 'D', body: 'b', writeScope: 'all' });
   assert.equal((await call(users.alice, 'DELETE', '/api/articles/d', undefined, { client: CLI })).status, 403);
   assert.equal((await call(users.bob, 'DELETE', '/api/articles/d')).status, 403);
   assert.equal((await call(users.alice, 'POST', '/api/articles/d/verify', undefined, { client: CLI })).status, 403);

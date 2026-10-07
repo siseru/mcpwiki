@@ -4,10 +4,18 @@ import DOMPurify, { type Config } from 'dompurify';
 
 marked.setOptions({ gfm: true, breaks: false });
 
+function sameOrigin(href: string): boolean {
+  try {
+    return new URL(href, location.href).origin === location.origin;
+  } catch {
+    return false;
+  }
+}
+
 DOMPurify.addHook('afterSanitizeAttributes', (node) => {
   if (node instanceof HTMLAnchorElement) {
-    const href = node.getAttribute('href') ?? '';
-    if (/^[a-z][a-z0-9+.-]*:/i.test(href) || href.startsWith('//')) {
+    // Classify by the URL the browser will actually resolve (e.g. "/\\evil.com" is cross-origin).
+    if (!sameOrigin(node.getAttribute('href') ?? '')) {
       node.setAttribute('target', '_blank');
       node.setAttribute('rel', 'noopener noreferrer nofollow');
     } else {
@@ -21,7 +29,7 @@ DOMPurify.addHook('afterSanitizeAttributes', (node) => {
   }
   if (node instanceof HTMLImageElement) {
     const src = node.getAttribute('src') ?? '';
-    if (!/^(https:|\/(?!\/)|data:image\/(png|gif|jpeg|webp);)/i.test(src)) node.removeAttribute('src');
+    if (!sameOrigin(src) && !/^data:image\/(png|gif|jpeg|webp);/i.test(src)) node.removeAttribute('src');
     node.setAttribute('loading', 'lazy');
     node.setAttribute('referrerpolicy', 'no-referrer');
   }

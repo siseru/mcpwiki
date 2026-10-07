@@ -33,7 +33,8 @@ test('tool flow: create, get, update with version, search, graph', async () => {
   assert.equal(web.generatedBy, 'mcpwiki-mcp/0.1');
 
   const g = await tool(users.bob, 'get_article', { id: 'mcp-note' });
-  assert.match(g.text, /trust="untrusted"/);
+  const tag = /<(untrusted-article-[0-9a-f]{16})>/.exec(g.text)![1];
+  assert.match(g.text, new RegExp(`</${tag}>$`));
   assert.match(g.text, /^---\ntype: Wiki Article/m);
   assert.equal(g.data.version, 1);
 
@@ -68,7 +69,7 @@ test('MCP cannot widen permissions but can narrow them; viewers cannot write', a
   await tool(users.alice, 'create_article', { id: 'p', title: 'P', body: 'x', read_scope: 'owner', write_scope: 'owner' });
   const widen = await tool(users.alice, 'update_article', { id: 'p', version: 1, read_scope: 'all' });
   assert.equal(widen.isError, true);
-  assert.match(widen.text, /cannot be widened via MCP/);
+  assert.match(widen.text, /only be widened from the web UI/);
   const narrow = await tool(users.alice, 'update_article', { id: 'p', version: 1, write_scope: 'none' });
   assert.equal(narrow.isError, false);
   const v = await tool(users.vic, 'create_article', { title: 'x', body: 'y' });

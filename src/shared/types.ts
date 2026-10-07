@@ -87,6 +87,8 @@ export interface HistoryEntry {
   updatedBy: string;
   via: Via;
   action: 'create' | 'update' | 'delete' | 'restore' | 'verify' | 'import';
+  /** readScope the revision was written with (absent on old entries => treated as owner-only). */
+  readScope?: ReadScope;
 }
 
 export interface AuditEntry {

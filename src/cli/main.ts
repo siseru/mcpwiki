@@ -360,8 +360,9 @@ async function cmdEdit(env: string, id: string, flags: Flags) {
     const file = join(dir, `${id}.md`);
     try {
       writeFileSync(file, original, { mode: 0o600 });
-      const editor = process.env.VISUAL || process.env.EDITOR || 'vi';
-      const res = spawnSync(editor, [file], { stdio: 'inherit', shell: /\s/.test(editor) });
+      // "code --wait" style values are split on whitespace; no shell is involved.
+      const [cmd, ...editorArgs] = (process.env.VISUAL || process.env.EDITOR || 'vi').trim().split(/\s+/);
+      const res = spawnSync(cmd!, [...editorArgs, file], { stdio: 'inherit' });
       if (res.status !== 0) throw new CliError(`editor exited with status ${res.status}`);
       const edited = readFileSync(file, 'utf8');
       if (edited === original) return out('no changes');
