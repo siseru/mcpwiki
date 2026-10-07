@@ -10,3 +10,9 @@ We aim to acknowledge reports within 5 business days.
 
 The application code in this repository (`src/`), the infrastructure definitions (`src/infra/`) and the CI workflows.
 See [docs/security.md](docs/security.md) for the security design and known trade-offs.
+
+---
+
+## 脆弱性の報告（日本語）
+
+セキュリティ上の問題は **公開 Issue にしないでください**。このリポジトリの「Security」タブ →「Report a vulnerability」（非公開の脆弱性報告）からご連絡ください。5 営業日以内の一次回答を目指します。設計と既知のトレードオフは [docs/security.md](docs/security.md) を参照してください。

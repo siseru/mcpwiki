@@ -36,9 +36,16 @@ export class GuardStack extends Stack {
         actions: [
           'iam:Create*', 'iam:Delete*', 'iam:Put*', 'iam:Attach*', 'iam:Detach*', 'iam:Update*', 'iam:Add*', 'iam:Remove*',
           'iam:Set*', 'iam:Tag*', 'iam:Untag*', 'iam:Upload*', 'iam:Change*', 'iam:Enable*', 'iam:Deactivate*', 'iam:Reset*',
-          'iam:Resync*', 'iam:PassRole',
+          'iam:Resync*',
         ],
         notResources: [...devRoles, `arn:aws:iam::${a}:role/aws-service-role/*`],
+      }),
+      // The dev deploy role hands the (boundary-limited) dev execution role to CloudFormation.
+      new iam.PolicyStatement({
+        sid: 'DenyPassRoleOutsideDev',
+        effect: iam.Effect.DENY,
+        actions: ['iam:PassRole'],
+        notResources: [...devRoles, `arn:aws:iam::${a}:role/cdk-${DEV_QUALIFIER}-cfn-exec-role-*`],
       }),
       new iam.PolicyStatement({
         sid: 'RequireBoundaryOnDevRoles',
@@ -103,10 +110,18 @@ export class GuardStack extends Stack {
           `arn:aws:s3:::cdk-hnb659fds-*`, `arn:aws:s3:::cdk-hnb659fds-*/*`, // prod/default CDK assets (deploy poisoning)
           `arn:aws:dynamodb:*:${a}:table/MCPWiki-prod-*`, `arn:aws:dynamodb:*:${a}:table/MCPWiki-prod-*/*`,
           `arn:aws:lambda:*:${a}:function:MCPWiki-prod-*`,
-          `arn:aws:ssm:*:${a}:parameter/mcpwiki/prod/*`, `arn:aws:ssm:*:${a}:parameter/cdk-bootstrap/hnb659fds/*`,
+          `arn:aws:ssm:*:${a}:parameter/mcpwiki/prod/*`,
           `arn:aws:logs:*:${a}:log-group:/aws/lambda/MCPWiki-prod-*`, `arn:aws:logs:*:${a}:log-group:aws-waf-logs-mcpwiki-prod*`,
           `arn:aws:backup:*:${a}:backup-vault:mcpwiki-prod`,
         ],
+      }),
+      // The default bootstrap version parameter may be read (CloudFormation re-resolves previous parameter
+      // values during updates) but never changed.
+      new iam.PolicyStatement({
+        sid: 'DenyDefaultBootstrapParamWrites',
+        effect: iam.Effect.DENY,
+        actions: ['ssm:Put*', 'ssm:Delete*', 'ssm:Label*', 'ssm:AddTags*', 'ssm:RemoveTags*', 'ssm:Unlabel*'],
+        resources: [`arn:aws:ssm:*:${a}:parameter/cdk-bootstrap/hnb659fds/*`],
       }),
       // Route 53: the hosted zone is shared with prod and unrelated sites.
       new iam.PolicyStatement({

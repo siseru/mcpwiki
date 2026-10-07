@@ -6,7 +6,7 @@
 // (administrator) execution role. Usage (administrator credentials):
 //   node scripts/bootstrap-dev.mjs            # prints the commands it runs
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 
 const QUALIFIER = 'mwdev';
 const BOUNDARY = 'MCPWikiDevBoundary';
@@ -34,9 +34,11 @@ const file = 'cdk.out/bootstrap-dev.yaml';
 writeFileSync(file, template);
 
 const account = execFileSync('aws', ['sts', 'get-caller-identity', '--query', 'Account', '--output', 'text'], { encoding: 'utf8' }).trim();
-const region = process.env.AWS_REGION || execFileSync('aws', ['configure', 'get', 'region'], { encoding: 'utf8' }).trim() || 'us-west-2';
+// Same region resolution as the CDK app (cdk.json context.region), plus us-east-1 for CloudFront/ACM/WAF.
+const region = JSON.parse(readFileSync('cdk.json', 'utf8')).context?.region ?? 'us-west-2';
+const envs = [...new Set([region, 'us-east-1'])].map((r) => `aws://${account}/${r}`);
 const args = [
-  'cdk', 'bootstrap', `aws://${account}/${region}`, `aws://${account}/us-east-1`,
+  'cdk', 'bootstrap', ...envs,
   '--qualifier', QUALIFIER,
   '--toolkit-stack-name', 'CDKToolkit-mcpwiki-dev',
   '--template', file,
