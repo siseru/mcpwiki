@@ -1,14 +1,19 @@
 // Cognito access-token verification (RS256, JWKS) using node:crypto only.
-import { createPublicKey, verify as cryptoVerify, type JsonWebKey, type KeyObject } from 'node:crypto';
+import { createPublicKey, verify as cryptoVerify, type KeyObject } from 'node:crypto';
 import type { Principal, Via } from '../shared/types.js';
 import { roleFromGroups } from '../shared/permissions.js';
 import { HttpError } from './errors.js';
 import type { Store } from './store.js';
 
-export interface Jwk extends JsonWebKey {
+/** RSA public JWK as published in Cognito's JWKS (own type: independent of @types/node versions). */
+export interface Jwk {
+  kty?: string;
+  n?: string;
+  e?: string;
   kid?: string;
   alg?: string;
   use?: string;
+  [member: string]: unknown;
 }
 
 export interface VerifierOptions {
