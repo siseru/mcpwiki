@@ -196,4 +196,4 @@ docs         設計資料と図
 
 ## ライセンス
 
-MIT
+Apache License 2.0（[LICENSE](LICENSE)）

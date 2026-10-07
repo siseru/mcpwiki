@@ -196,4 +196,4 @@ Security design: [docs/security.en.md](docs/security.en.md) / reporting vulnerab
 
 ## License
 
-MIT
+Apache License 2.0 ([LICENSE](LICENSE))

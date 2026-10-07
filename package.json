@@ -2,7 +2,7 @@
   "name": "mcpwiki",
   "version": "0.1.0",
   "description": "Lightweight serverless wiki designed for LLM / MCP integration (OKF compatible)",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "private": true,
   "type": "module",
   "engines": {
