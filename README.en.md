@@ -46,6 +46,11 @@ Each article has a **read scope** and a **write scope**. All permission checks l
 - **Permissions can only be widened from the web UI.** CLI, MCP and API tokens can only narrow them. This means a prompt-injected agent with shell access still can't make articles public.
 - Edits use **optimistic locking**: if your `version` doesn't match the current one, the server returns 409.
 
+## UI and help pages
+
+- A sidebar is always visible on the left: navigation, help, recently updated articles and tags. On narrow screens, toggle it with ☰.
+- On first start, two help articles are created automatically: `help-wiki` (how to use MCPWiki) and `help-markdown` (Markdown guide; the pages are in Japanese). Everyone can read them; only admins can edit them. They aren't re-created after being edited or deleted. The sources are `src/backend/seed/*.md`; run `node scripts/gen-seed.mjs` after changing them (lint checks that the generated file is up to date).
+
 ## Attachments (images and PDF)
 
 - **Allowed:** PNG, JPEG, GIF, WebP and PDF, up to 10 MB per file and 100 files per article. SVG and HTML are rejected because they can carry script.
