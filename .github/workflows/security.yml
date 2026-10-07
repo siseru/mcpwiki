@@ -154,7 +154,7 @@ jobs:
           persist-credentials: false
       - name: Mask the target in logs
         if: env.TARGET != ''
-        run: node scripts/ci/redact.mjs --mask
+        run: scripts/ci/mask.sh
       - name: ZAP baseline (report only; output redacted because logs are public)
         if: env.TARGET != ''
         run: |

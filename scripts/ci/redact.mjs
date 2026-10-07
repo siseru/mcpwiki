@@ -3,8 +3,8 @@
 // Workflow logs, job summaries and artifacts of a public repository are readable by anyone, so the
 // AWS account id, hosted zone and host names (kept out of git) must not appear there either.
 //
-//   node scripts/ci/redact.mjs --mask          emit ::add-mask:: for every known value (run first in a job)
 //   <cmd> 2>&1 | node scripts/ci/redact.mjs    copy stdin to stdout with known values and AWS ids replaced
+// (Masks for the runner are registered by scripts/ci/mask.sh.)
 //
 // Known values come from AWS_ACCOUNT_ID, MCPWIKI_DOMAINS (the same variables the deploy uses) and REDACT_EXTRA.
 import { createInterface } from 'node:readline';
@@ -36,28 +36,24 @@ try {
   console.error('redact: MCPWIKI_DOMAINS is not valid JSON; only generic patterns are applied');
 }
 
-// Identifiers created at deploy time (not known in advance).
-const PATTERNS = [
-  /\b\d{12}\b/g, // AWS account ids (also inside ARNs)
-  /\b[a-z]{2}-[a-z]+-\d_[A-Za-z0-9]{6,}\b/g, // Cognito user pool ids
-  /\bd[a-z0-9]{8,16}\.cloudfront\.net\b/g, // CloudFront distribution domains
-  /\b[a-z0-9]{10}\.execute-api\.[a-z0-9-]+\.amazonaws\.com\b/g, // API Gateway endpoints
-  /\bZ[A-Z0-9]{8,32}\b/g, // Route 53 hosted zone ids
+// Identifiers created at deploy time (not known in advance). Each log line is split into tokens and every
+// token is tested against fully anchored patterns (no partial matches inside unrelated words or URLs).
+const TOKEN_PATTERNS = [
+  /^\d{12}$/, // AWS account id
+  /^[a-z]{2}-[a-z]+-\d_[A-Za-z0-9]{6,}$/, // Cognito user pool id
+  /^d[a-z0-9]{8,16}\.cloudfront\.net$/, // CloudFront distribution domain
+  /^[a-z0-9]{10}\.execute-api\.[a-z0-9-]+\.amazonaws\.com$/, // API Gateway endpoint
+  /^Z[A-Z0-9]{8,32}$/, // Route 53 hosted zone id
 ];
-
-if (process.argv.includes('--mask')) {
-  for (const v of values) console.log(`::add-mask::${v}`);
-  console.log(`redact: registered ${values.size} value(s) for masking`);
-  process.exit(0);
-}
+const TOKEN = /[A-Za-z0-9_.-]+/g;
 
 // Longest first so that "auth.<host>" is replaced before "<host>".
 const literal = [...values].sort((a, b) => b.length - a.length);
 const redactLine = (line) => {
   let out = line;
   for (const v of literal) out = out.split(v).join('***');
-  for (const re of PATTERNS) out = out.replace(re, '***');
-  return out;
+  // ARNs split on ":" and "/", so an account id inside an ARN is its own token.
+  return out.replace(TOKEN, (tok) => (TOKEN_PATTERNS.some((re) => re.test(tok)) ? '***' : tok));
 };
 
 const rl = createInterface({ input: process.stdin, crlfDelay: Infinity });

@@ -60,7 +60,7 @@ if (/\bnpx\b/.test(deployJob)) violations.push('deploy.yml: the deploy job must 
 const deployJobs = deployWf.slice(deployWf.indexOf('\njobs:\n') + 7);
 for (const job of deployJobs.split(/\n(?=  \w[\w-]*:\n)/)) {
   const name = job.trim().slice(0, job.trim().indexOf(':'));
-  if (!job.includes('node scripts/ci/redact.mjs --mask')) violations.push(`deploy.yml (${name}): register masks first (node scripts/ci/redact.mjs --mask)`);
+  if (!job.includes('scripts/ci/mask.sh')) violations.push(`deploy.yml (${name}): register masks first (scripts/ci/mask.sh)`);
   for (const m of job.matchAll(/upload-artifact@[\s\S]*?path:\s*(\S+)/g)) {
     if (!m[1].endsWith('.sealed')) violations.push(`deploy.yml (${name}): only sealed artifacts may be uploaded (found ${m[1]})`);
   }

@@ -162,7 +162,7 @@ The initial backfill found 12 packages published less than 7 days earlier. They 
 | IaC | cdk-nag AwsSolutions (every acknowledgement has a reason); checkov on the synthesized templates (every skip in `.checkov.yaml` has a reason) |
 | Pipeline | zizmor; lint requiring SHA-pinned actions, explicit `permissions`, `id-token` only in deploy jobs, and no `pull_request_target`; OpenSSF Scorecard |
 | Runtime | Post-deploy smoke tests (headers, authentication, redirects); weekly OWASP ZAP baseline against dev; optional AI security review on PRs |
-| Public-repository hygiene | Logs, job summaries and artifacts of a public repository are readable by anyone. Environment-specific values (account id, hosted zone, host names, user pool ids and similar) are masked and redacted (`scripts/ci/redact.mjs`). The synthesized assembly is encrypted and integrity-protected (encrypt-then-MAC) with an environment secret (`scripts/ci/seal.sh`). lint enforces both. |
+| Public-repository hygiene | Logs, job summaries and artifacts of a public repository are readable by anyone. Environment-specific values (account id, hosted zone, host names, user pool ids and similar) are masked and redacted (`scripts/ci/mask.sh`, `scripts/ci/redact.mjs`). The synthesized assembly is encrypted and integrity-protected (encrypt-then-MAC) with an environment secret (`scripts/ci/seal.sh`). lint enforces both. |
 | Deployment | Build and synth run without credentials. Only the deploy job uses OIDC, with `--ignore-scripts`, no cache, and the pre-synthesized assembly. |
 
 ## 2026-10 security review: status

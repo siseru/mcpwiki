@@ -125,7 +125,7 @@ Set the alarm recipient with `MCPWIKI_ALARM_EMAIL=ops@example.com` (or `-c alarm
 
 ### Making the repository public
 
-Anyone can read the Actions logs, job summaries and artifacts of a public repository. The workflows therefore mask and redact environment-specific values (account id, hosted zone, host names, user pool ids and similar) with `scripts/ci/redact.mjs`, and encrypt the synthesized assembly with `scripts/ci/seal.sh`. lint enforces both. Before going public, configure the following on GitHub:
+Anyone can read the Actions logs, job summaries and artifacts of a public repository. The workflows therefore mask and redact environment-specific values (account id, hosted zone, host names, user pool ids and similar) with `scripts/ci/mask.sh` and `scripts/ci/redact.mjs`, and encrypt the synthesized assembly with `scripts/ci/seal.sh`. lint enforces both. Before going public, configure the following on GitHub:
 
 | Setting | Where | What |
 |---|---|---|

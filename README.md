@@ -125,7 +125,7 @@ scripts/create-admin.sh dev <username> <email> admin   # 最初の管理者を�
 
 ### 公開リポジトリにする場合
 
-Public リポジトリでは、Actions のログ、ジョブのサマリ、artifact を誰でも読めます。このため、環境固有の値（アカウント ID、ホストゾーン、ホスト名、User Pool ID など）は、ワークフローの中でマスクと伏せ字にしています（`scripts/ci/redact.mjs`）。合成済みのアセンブリは暗号化しています（`scripts/ci/seal.sh`）。どちらも lint で強制しています。公開する前に、GitHub で次の設定を行ってください。
+Public リポジトリでは、Actions のログ、ジョブのサマリ、artifact を誰でも読めます。このため、環境固有の値（アカウント ID、ホストゾーン、ホスト名、User Pool ID など）は、ワークフローの中でマスクと伏せ字にしています（`scripts/ci/mask.sh`、`scripts/ci/redact.mjs`）。合成済みのアセンブリは暗号化しています（`scripts/ci/seal.sh`）。どちらも lint で強制しています。公開する前に、GitHub で次の設定を行ってください。
 
 | 設定 | 場所 | 内容 |
 |---|---|---|
