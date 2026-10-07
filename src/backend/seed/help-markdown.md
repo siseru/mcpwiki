@@ -6,8 +6,6 @@ tags: [help, markdown]
 status: stable
 ---
 
-# Markdown の書き方
-
 この Wiki の本文は **GitHub Flavored Markdown（GFM）** 互換の Markdown で書きます。左の「書き方」をそのまま本文に書くと、右のように表示されます。
 
 関連: [MCPWiki の使い方](/wiki/help-wiki)

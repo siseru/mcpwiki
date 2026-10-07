@@ -727,6 +727,11 @@ async function boot() {
   me = await api<Me>('GET', '/api/me');
   header();
   sidebar();
+  // Narrow screens: tapping outside the open drawer closes it.
+  document.addEventListener('click', (ev) => {
+    const t = ev.target as Element | null;
+    if (document.body.classList.contains('sidebar-open') && !t?.closest('#sidebar, .menu-toggle')) document.body.classList.remove('sidebar-open');
+  });
   await render();
 }
 
