@@ -6,8 +6,6 @@ tags: [help]
 status: stable
 ---
 
-# MCPWiki の使い方
-
 MCPWiki は、人が Web 画面から、AI（LLM）が MCP から、スクリプトが CLI から、同じ記事を読み書きできる Wiki です。記事の書き方は [Markdown の書き方](/wiki/help-markdown) を見てください。
 
 ## ログイン

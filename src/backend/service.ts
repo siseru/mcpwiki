@@ -106,6 +106,8 @@ export interface ImportReport {
   skipped: { name: string; reason: string }[];
 }
 
+const SEED_ACTOR = 'process:mcpwiki-seed';
+
 export class WikiService {
   private readonly cursorKey: Buffer;
 
@@ -159,13 +161,27 @@ export class WikiService {
     const system: Principal = { sub: 'system', username: 'MCPWiki', role: 'admin', clientId: 'system', via: 'api', issuedAt: 0 };
     const created: string[] = [];
     for (const page of pages) {
-      if (await this.store.getMeta(page.id)) continue;
       const f = okfToArticleFields(parseOkfDocument(page.text));
+      const cur = await this.store.getMeta(page.id);
+      if (cur) {
+        // Ship updated help text, but only while nobody has touched the page since the seeder last wrote it.
+        const untouched = !cur.deleted && cur.generatedBy === SEED_ACTOR && cur.updatedBy === system.username;
+        if (!untouched) continue;
+        const same = cur.title === f.title && cur.description === (f.description ?? '') && cur.tags.join('\n') === (f.tags ?? []).join('\n') && (await this.bodyOf(cur)) === f.body;
+        if (same) continue;
+        try {
+          await this.update(system, page.id, cur.version, { title: f.title, description: f.description, tags: f.tags, body: f.body }, { generatedBy: SEED_ACTOR });
+          created.push(page.id);
+        } catch (e) {
+          if (!(e instanceof HttpError && e.status === 409)) throw e; // updated concurrently
+        }
+        continue;
+      }
       try {
         await this.create(
           system,
           { id: page.id, type: f.type, title: f.title, description: f.description, tags: f.tags, status: f.status, body: f.body, readScope: 'all', writeScope: 'admin' },
-          { generatedBy: 'process:mcpwiki-seed' },
+          { generatedBy: SEED_ACTOR },
         );
         created.push(page.id);
       } catch (e) {

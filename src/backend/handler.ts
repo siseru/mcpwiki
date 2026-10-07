@@ -81,10 +81,10 @@ async function getApp() {
   const service = new WikiService(store, new CognitoUserDirectory(poolId, region), undefined, {
     cursorKey: createHash('sha256').update(`mcpwiki-cursor|${secret}`).digest(),
   });
-  // Default help pages: created once if missing (idempotent across concurrent cold starts).
+  // Default help pages: created if missing, refreshed while still untouched (idempotent across concurrent cold starts).
   try {
     const created = await service.ensureSeedPages(SEED_PAGES);
-    if (created.length) console.log(JSON.stringify({ msg: 'seed pages created', created }));
+    if (created.length) console.log(JSON.stringify({ msg: 'seed pages created or updated', created }));
   } catch (err) {
     console.error(JSON.stringify({ msg: 'seed pages failed', err: String(err) }));
   }

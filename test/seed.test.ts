@@ -37,3 +37,18 @@ test('seed documents are valid OKF and render-safe', () => {
     assert.ok(!/<script|javascript:/i.test(p.text), `${p.id} must not contain script`);
   }
 });
+
+test('untouched help pages pick up new text; edited ones are left alone', async () => {
+  const ctx = setup();
+  const old = SEED_PAGES.map((p) => ({ id: p.id, text: p.text.replace(/\n---\n/, '\n---\n\n# old heading\n') }));
+  await ctx.service.ensureSeedPages(old);
+  await ctx.call(users.admin, 'PUT', '/api/articles/help-wiki', { version: 1, body: 'customized' });
+
+  assert.deepEqual(await ctx.service.ensureSeedPages(SEED_PAGES), ['help-markdown']);
+  const md = (await ctx.call(users.vic, 'GET', '/api/articles/help-markdown')).json;
+  assert.equal(md.version, 2);
+  assert.ok(!md.body.includes('# old heading'));
+  assert.equal(md.writeScope, 'admin');
+  assert.equal((await ctx.call(users.vic, 'GET', '/api/articles/help-wiki')).json.body, 'customized');
+  assert.deepEqual(await ctx.service.ensureSeedPages(SEED_PAGES), [], 'no-op when already current');
+});
