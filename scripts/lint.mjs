@@ -1,8 +1,10 @@
 // Repository policy checks (deterministic; non-zero exit on violation).
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const root = new URL('..', import.meta.url).pathname;
+// fileURLToPath, not URL#pathname: on Windows the latter yields "/D:/...", which is not a usable path.
+const root = fileURLToPath(new URL('..', import.meta.url));
 const files = (dir) => statSync(dir).isFile() ? [dir] :
   readdirSync(dir).flatMap((f) => {
     const p = join(dir, f);

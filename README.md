@@ -180,6 +180,25 @@ mcpwiki download <id> <ファイルID> # 添付の保存
 
 ブラウザが別のマシンにある場合は、サインイン後に表示される `http://localhost:53682/callback?...` の URL を CLI に貼り付けてください。トークンは `~/.config/mcpwiki/credentials.json`（0600）に保存し、自動で更新します。
 
+### Windows
+
+CLI と MCP ブリッジは Windows でもそのまま動きます（`npm test` の E2E も Windows で通ります）。
+
+```cmd
+npm run build
+npm install -g .                  :: mcpwiki コマンド（npm が mcpwiki.cmd を作ります）
+mcpwiki configure --env dev --url https://wiki-dev.example.com
+mcpwiki login
+```
+
+インストールせずに `node dist\cli\mcpwiki.mjs <command>` と直接呼んでも同じです。Windows では次の点が異なります。
+
+- 設定とトークンは `%APPDATA%\mcpwiki\`（`XDG_CONFIG_HOME` があればそちら）に保存します。POSIX の `0600` に相当する保護はなく、ユーザープロファイルの ACL に従います。
+- `mcpwiki login` は `rundll32.exe url.dll,FileProtocolHandler` 経由で既定のブラウザを開きます（`--no-browser` で URL を手で開くこともできます）。
+- `mcpwiki edit <id>` の既定のエディタは `notepad.exe` です。`VISUAL` / `EDITOR` を設定する場合、空白を含むパスは引用符で囲みます（例: `set EDITOR="C:\Program Files\Notepad++\notepad++.exe" -multiInst`）。`code --wait` のような `.cmd` のラッパも使えます。エディタは**閉じるまで待つもの**を指定してください。
+- `--file` に渡す Markdown は CRLF でも BOM 付きでも構いません（読み込み時に正規化します）。
+- `npm run build` / `npm test` / `npm run lint` / `npm run typecheck` / `npm run synth` は cmd / PowerShell でも動きます（CI も `windows-latest` で lint・typecheck・テストを実行します）。bash が必要なのはデプロイ用の `scripts/create-admin.sh` だけです（Git Bash か WSL で実行してください）。
+
 ## MCP
 
 MCP クライアントからは、CLI に組み込まれた stdio ブリッジ（`mcpwiki mcp`）を使うのが簡単です。ブリッジは CLI に保存されたログイン情報を使い、トークンの更新も自動で行います。先に CLI でログインしてください（`mcpwiki whoami` が通る状態）。
@@ -217,7 +236,7 @@ claude mcp list            # mcpwiki が Connected になっていることを�
 }
 ```
 
-- Kiro の起動環境では `~/.local/bin` が PATH に入っていないことがあるので、`node` と `mcpwiki` は**絶対パス**で書きます（`which node` と `which mcpwiki` で確認できます）。
+- Kiro の起動環境では `~/.local/bin` が PATH に入っていないことがあるので、`node` と `mcpwiki` は**絶対パス**で書きます（`which node` と `which mcpwiki`、Windows では `where node` と `where mcpwiki` で確認できます。JSON にはバックスラッシュをエスケープして書きます）。
 - `autoApprove` には読み取り用のツールだけを入れます。作成（`create_article`）と更新（`update_article`）は、実行前に Kiro が確認を求めます。
 - 保存したら、Kiro パネルの MCP SERVERS で `mcpwiki` が接続済みになり、8 個のツールが表示されることを確認します（表示されなければ再接続します）。
 
