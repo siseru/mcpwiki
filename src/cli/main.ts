@@ -9,7 +9,7 @@ import { createInterface } from 'node:readline';
 import type { PublicConfig } from '../shared/types.js';
 import { okfToArticleFields, parseOkfDocument } from '../shared/okf.js';
 
-const VERSION = '0.1.0';
+import { VERSION } from '../shared/version.js';
 
 // ------------------------------------------------------------------ config
 

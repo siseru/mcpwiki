@@ -68,6 +68,8 @@ export class WikiStack extends Stack {
       serverAccessLogsPrefix: 's3-content/',
       removalPolicy,
       autoDeleteObjects: !prod,
+      // Admin full exports are temporary download files.
+      lifecycleRules: [{ id: 'expire-exports', prefix: 'exports/', expiration: Duration.days(1), noncurrentVersionExpiration: Duration.days(1) }],
       // Browsers upload attachments with presigned POSTs and fetch them with presigned GETs, from the wiki origin only.
       cors: [
         {
@@ -219,6 +221,13 @@ export class WikiStack extends Stack {
       new iam.PolicyStatement({
         actions: ['s3:PutObject', 's3:GetObject', 's3:DeleteObject'],
         resources: [contentBucket.arnForObjects('attachments/*')],
+      }),
+    );
+    // Admin full export: the Lambda writes the zip and signs a short-lived GET for it (expired by lifecycle).
+    fn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['s3:PutObject', 's3:GetObject'],
+        resources: [contentBucket.arnForObjects('exports/*')],
       }),
     );
     fn.addToRolePolicy(
@@ -494,6 +503,7 @@ export class WikiStack extends Stack {
       { id: 'AwsSolutions-IAM4[Policy::arn:<AWS::Partition>:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole]', reason: 'CloudWatch Logs only.' },
       { id: `AwsSolutions-IAM5[Resource::<${this.getLogicalId(contentBucket.node.defaultChild as s3.CfnBucket)}.Arn>/articles/*]`, reason: 'Article objects (put/get/get-version only, no delete).' },
       { id: `AwsSolutions-IAM5[Resource::<${this.getLogicalId(contentBucket.node.defaultChild as s3.CfnBucket)}.Arn>/attachments/*]`, reason: 'Attachment objects: presigned upload/download and removal of rejected/deleted files (no version deletion).' },
+      { id: `AwsSolutions-IAM5[Resource::<${this.getLogicalId(contentBucket.node.defaultChild as s3.CfnBucket)}.Arn>/exports/*]`, reason: 'Admin export archives: write once, presigned download; expired by a lifecycle rule after one day.' },
       { id: 'AwsSolutions-COG8', reason: 'Cognito Plus tier (threat protection) is not used for cost reasons; MFA is mandatory.' },
       { id: 'AwsSolutions-COG3', reason: 'Threat protection requires the Cognito Plus tier; MFA is mandatory and WAF rate limiting is applied in prod (cost trade-off).' },
       { id: 'AwsSolutions-APIG4', reason: 'Authorization is performed in the Lambda (Cognito JWT verification, see src/backend/auth.ts) so MCP clients get RFC 9728 WWW-Authenticate responses.' },

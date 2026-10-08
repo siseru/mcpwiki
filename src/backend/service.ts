@@ -3,9 +3,9 @@
 // as "not found" so their existence is not revealed.
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import type {
-  Article, ArticleMeta, ArticleSummary, AuditEntry, Graph, GraphEdge, HistoryEntry, Principal, Role,
+  Article, ArticleMeta, ArticleSummary, AuditEntry, Graph, GraphEdge, HistoryEntry, Principal, Role, SiteSettings,
 } from '../shared/types.js';
-import { ROLES } from '../shared/types.js';
+import { DEFAULT_SITE_TITLE, ROLES } from '../shared/types.js';
 import {
   canChangePermissions, canCreate, canDelete, canRead, canWrite, isAdmin, isReadScopeWider, isWriteScopeWider, scopesValid,
 } from '../shared/permissions.js';
@@ -13,7 +13,7 @@ import {
   articleToOkf, bundleIndex, BUNDLE_DIR, DEFAULT_TYPE, okfToArticleFields, parseOkfDocument, toBundleLinks,
 } from '../shared/okf.js';
 import { extractLinks, ID_RE, indexTerms, normalize, snippet, tokenize } from '../shared/text.js';
-import { validateArticleInput, ValidationError } from '../shared/validate.js';
+import { validateArticleInput, validateSiteSettings, ValidationError } from '../shared/validate.js';
 import { badRequest, ConflictError, forbidden, HttpError, notFound } from './errors.js';
 import type { Store } from './store.js';
 import { listKey } from './store.js';
@@ -22,6 +22,10 @@ import { readZip, writeZip } from './zip.js';
 
 export const MCP_ACTOR = 'mcpwiki-mcp/0.1';
 const MAX_SCAN = 5000;
+/** Admin full export (stored in S3, so not bound by the 6MB response limit). */
+const MAX_ARCHIVE_ARTICLES = 50_000;
+const MAX_ARCHIVE_BYTES = 200 * 1024 * 1024;
+const SETTINGS_TTL_MS = 30_000;
 const MAX_GRAPH_NODES = 300;
 const MAX_EXPORT_BYTES = 5 * 1024 * 1024;
 
@@ -599,7 +603,58 @@ export class WikiService {
     });
   }
 
+  // ------------------------------------------------------------- site settings
+
+  private settingsCache?: { at: number; value: SiteSettings };
+
+  async getSettings(): Promise<SiteSettings> {
+    if (this.settingsCache && this.now().getTime() - this.settingsCache.at < SETTINGS_TTL_MS) return { ...this.settingsCache.value };
+    const s = await this.store.getSettings();
+    const value: SiteSettings = { title: s?.title || DEFAULT_SITE_TITLE };
+    this.settingsCache = { at: this.now().getTime(), value };
+    return { ...value };
+  }
+
+  async updateSettings(p: Principal, raw: unknown): Promise<SiteSettings> {
+    if (!isAdmin(p) || p.via !== 'web') throw forbidden('only admins can change site settings from the web UI');
+    let s: SiteSettings;
+    try {
+      s = validateSiteSettings(raw);
+    } catch (e) {
+      if (e instanceof ValidationError) throw badRequest(e.message);
+      throw e;
+    }
+    await this.store.putSettings(s);
+    this.settingsCache = { at: this.now().getTime(), value: s };
+    await this.audit(p, 'settings', undefined, `title=${s.title}`);
+    return { ...s };
+  }
+
   // ------------------------------------------------------------- OKF bundles
+
+  /** Admin-only: every live article as an OKF bundle (same layout as exportBundle, no 5MB cap). */
+  async exportArchive(p: Principal): Promise<{ zip: Buffer; count: number }> {
+    if (!isAdmin(p) || p.via !== 'web') throw forbidden('only admins can export all articles from the web UI');
+    const items: ArticleMeta[] = [];
+    let after: string | undefined;
+    do {
+      const page = await this.store.listMetas({ deleted: false, after, limit: 500 });
+      items.push(...page.items);
+      after = page.next;
+      if (items.length > MAX_ARCHIVE_ARTICLES) throw new HttpError(413, 'too_large', `more than ${MAX_ARCHIVE_ARTICLES} articles; export with the CLI in parts`);
+    } while (after);
+    let total = 0;
+    const files = await mapLimit(items, 20, async (m) => {
+      const text = toBundleLinks(articleToOkf(m, await this.bodyOf(m)));
+      total += Buffer.byteLength(text);
+      if (total > MAX_ARCHIVE_BYTES) throw new HttpError(413, 'too_large', 'export exceeds 200MB');
+      return { name: `${BUNDLE_DIR}/${m.id}.md`, data: Buffer.from(text, 'utf8') };
+    });
+    const { title } = await this.getSettings();
+    files.unshift({ name: 'index.md', data: Buffer.from(bundleIndex(items, title), 'utf8') });
+    await this.audit(p, 'export-all', undefined, `${items.length} articles`);
+    return { zip: writeZip(files, this.now()), count: items.length };
+  }
 
   async exportBundle(p: Principal): Promise<Buffer> {
     const { items } = await this.allReadable(p);
@@ -610,7 +665,7 @@ export class WikiService {
       if (total > MAX_EXPORT_BYTES) throw new HttpError(413, 'too_large', 'export exceeds 5MB; contact an admin');
       return { name: `${BUNDLE_DIR}/${m.id}.md`, data: Buffer.from(text, 'utf8') };
     });
-    files.unshift({ name: 'index.md', data: Buffer.from(bundleIndex(items, 'MCPWiki'), 'utf8') });
+    files.unshift({ name: 'index.md', data: Buffer.from(bundleIndex(items, (await this.getSettings()).title), 'utf8') });
     await this.audit(p, 'export', undefined, `${items.length} articles`);
     return writeZip(files, this.now());
   }

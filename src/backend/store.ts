@@ -1,5 +1,5 @@
 // Persistence interface. Implemented by DynamoStore (AWS) and MemoryStore (tests/local).
-import type { ArticleMeta, Attachment, AuditEntry, HistoryEntry } from '../shared/types.js';
+import type { ArticleMeta, Attachment, AuditEntry, HistoryEntry, SiteSettings } from '../shared/types.js';
 
 export interface UserState {
   disabled: boolean;
@@ -45,6 +45,9 @@ export interface Store {
   /** Fixed-window counter. Returns false when the limit is exceeded. */
   hit(key: string, windowSec: number, limit: number): Promise<boolean>;
 
+  getSettings(): Promise<Partial<SiteSettings> | null>;
+  putSettings(s: SiteSettings): Promise<void>;
+
   putAttachment(a: Attachment): Promise<void>;
   getAttachment(articleId: string, fileId: string): Promise<Attachment | null>;
   listAttachments(articleId: string): Promise<Attachment[]>;
@@ -57,6 +60,8 @@ export interface AttachmentBlobs {
   /** Size and first bytes of an uploaded object, or null if it does not exist. */
   head(key: string, bytes: number): Promise<{ size: number; head: Buffer } | null>;
   read(key: string, maxBytes: number): Promise<Buffer>;
+  /** Server-side write (admin exports). */
+  put(key: string, data: Buffer, contentType: string): Promise<void>;
   remove(key: string): Promise<void>;
 }
 

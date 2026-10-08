@@ -45,6 +45,7 @@ English | [日本語](security.md)
   - reindex
 - Marking an article as reviewed requires write permission on it.
 - **Permissions can only be widened from the web UI.** CLI, MCP and API tokens can only narrow them.
+- **Downloading every article** is limited to admins in the web UI. The ZIP is stored under an unguessable name in `exports/`, handed out as a presigned URL valid for 5 minutes and deleted by a lifecycle rule after one day. The Lambda only has Put and Get on `exports/*`, and each export is audited.
 - **Input validation** happens in `src/shared/validate.ts`:
   - size limits
   - no C0, C1 or bidi control characters

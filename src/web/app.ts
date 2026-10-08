@@ -1,8 +1,9 @@
 // MCPWiki single-page app (user + admin screens).
-import type { ArticleSummary, Graph, HistoryEntry, ReadScope, WriteScope } from '../shared/types.js';
+import type { ArticleSummary, Graph, HistoryEntry, ReadScope, SiteSettings, WriteScope } from '../shared/types.js';
 import { READ_SCOPES, STATUSES, WRITE_SCOPES } from '../shared/types.js';
 import { scopesValid } from '../shared/permissions.js';
 import { linkTargetToId } from '../shared/text.js';
+import { REPOSITORY_URL, VERSION } from '../shared/version.js';
 import { api, apiBlob, ApiError } from './api.js';
 import { handleCallback, isSignedIn, loadConfig, login, logout } from './auth.js';
 import { append, clear, fmtDate, h } from './dom.js';
@@ -13,6 +14,7 @@ import { ACCEPT, deleteAttachment, FILE_PATH_RE, formatSize, hydrateAttachments,
 interface Me {
   username: string;
   role: 'admin' | 'editor' | 'viewer';
+  site: SiteSettings;
 }
 
 let me: Me;
@@ -452,12 +454,13 @@ function editorView(a: any | null) {
 
 async function adminView(path: string) {
   if (me.role !== 'admin') throw new Error('管理者のみアクセスできます。');
-  const nav = h('nav', { class: 'tabs' }, ...[['/admin', 'ユーザ'], ['/admin/articles', '記事'], ['/admin/audit', '監査ログ'], ['/admin/okf', 'OKF 入出力']].map(([p, t]) => link(p!, h('span', { class: path === p ? 'tab active' : 'tab' }, t!))));
+  const nav = h('nav', { class: 'tabs' }, ...[['/admin', 'ユーザ'], ['/admin/articles', '記事'], ['/admin/audit', '監査ログ'], ['/admin/okf', 'OKF 入出力'], ['/admin/site', 'サイト設定']].map(([p, t]) => link(p!, h('span', { class: path === p ? 'tab active' : 'tab' }, t!))));
   let body: Node;
   if (path === '/admin') body = await adminUsers();
   else if (path === '/admin/articles') body = await adminArticles();
   else if (path === '/admin/audit') body = await adminAudit(new URLSearchParams(location.search).get('date') ?? new Date().toISOString().slice(0, 10));
   else if (path === '/admin/okf') body = adminOkf();
+  else if (path === '/admin/site') body = adminSite();
   else body = h('p', null, 'not found');
   return h('div', null, h('h1', null, '管理'), nav, body);
 }
@@ -565,16 +568,61 @@ async function adminAudit(date: string) {
   );
 }
 
+function adminSite() {
+  const msg = h('div', { role: 'status' });
+  const title = h('input', { type: 'text', value: me.site.title, required: true, maxlength: 60, 'aria-label': 'サイトタイトル' });
+  const form = h(
+    'form',
+    {
+      class: 'inline-form',
+      onsubmit: async (ev: Event) => {
+        ev.preventDefault();
+        clear(msg);
+        try {
+          me.site = await api<SiteSettings>('PUT', '/api/admin/settings', { title: title.value });
+          applySiteTitle();
+          header();
+          msg.appendChild(h('div', { class: 'notice' }, '保存しました。'));
+        } catch (e) {
+          msg.appendChild(errorBox(e));
+        }
+      },
+    },
+    title,
+    h('button', { type: 'submit' }, '保存'),
+  );
+  return h(
+    'div',
+    null,
+    h('h2', null, 'サイトタイトル'),
+    h('p', { class: 'muted' }, 'ヘッダー、ブラウザのタブ、エクスポートの index.md に表示されます（60 文字まで）。サインイン前の画面は MCPWiki のままです。'),
+    form,
+    msg,
+  );
+}
+
 function adminOkf() {
   const msg = h('div', { role: 'status' });
   const file = h('input', { type: 'file', accept: '.zip,application/zip' });
   const exportBtn = h('button', {
-    onclick: async () => {
-      const r = await apiBlob('GET', '/api/export');
-      if (!r.ok) return alert(r.json?.error?.message ?? `HTTP ${r.status}`);
-      saveBlob(r.blob, 'mcpwiki-okf.zip');
+    onclick: async (ev: Event) => {
+      const btn = ev.currentTarget as HTMLButtonElement;
+      clear(msg);
+      btn.disabled = true;
+      msg.appendChild(h('div', { class: 'muted' }, 'ZIP を作成しています…'));
+      try {
+        const r = await api<{ count: number; size: number; url: string }>('POST', '/api/admin/export');
+        clear(msg);
+        msg.appendChild(h('div', { class: 'notice' }, `${r.count} 件の記事 (${formatSize(r.size)}) をダウンロードします。`));
+        location.assign(r.url); // presigned S3 URL served as an attachment: the page stays
+      } catch (e) {
+        clear(msg);
+        msg.appendChild(errorBox(e));
+      } finally {
+        btn.disabled = false;
+      }
     },
-  }, 'OKF バンドルをダウンロード');
+  }, '全記事を ZIP でダウンロード');
   const importBtn = h('button', {
     onclick: async () => {
       clear(msg);
@@ -607,7 +655,7 @@ function adminOkf() {
     'div',
     null,
     h('h2', null, 'エクスポート'),
-    h('p', { class: 'muted' }, 'Open Knowledge Format v0.2 のバンドル (index.md + wiki/<id>.md) を ZIP で出力します。'),
+    h('p', { class: 'muted' }, '公開中のすべての記事（閲覧範囲を問わず。削除済みは除く）を、Open Knowledge Format v0.2 のバンドル (index.md + wiki/<id>.md) として ZIP で出力します。各記事は frontmatter 付きの Markdown で、このままインポートできます。添付ファイルは含みません。'),
     exportBtn,
     h('h2', null, 'インポート'),
     h('p', { class: 'muted' }, 'OKF バンドルの ZIP を取り込みます。同じ ID の記事は更新されます (最大 1000 ファイル / 20MB)。'),
@@ -622,6 +670,19 @@ function adminOkf() {
 
 // ------------------------------------------------------------------ boot
 
+function applySiteTitle() {
+  document.title = me.site.title;
+}
+
+function footer() {
+  const el = document.getElementById('footer')!;
+  clear(el);
+  append(el, [
+    h('span', null, `MCPWiki ${VERSION}`),
+    h('a', { href: REPOSITORY_URL, target: '_blank', rel: 'noopener noreferrer' }, 'GitHub'),
+  ]);
+}
+
 function header() {
   const q = h('input', { type: 'search', placeholder: '検索', 'aria-label': '検索' });
   const hdr = document.getElementById('header')!;
@@ -633,7 +694,7 @@ function header() {
       'aria-controls': 'sidebar',
       onclick: () => document.body.classList.toggle('sidebar-open'),
     }, '☰'),
-    link('/', h('span', { class: 'brand' }, 'MCPWiki')),
+    link('/', h('span', { class: 'brand' }, me.site.title)),
     h('form', { class: 'hsearch', onsubmit: (ev: Event) => (ev.preventDefault(), navigate(`/search?q=${encodeURIComponent(q.value)}`)) }, q),
     h(
       'nav',
@@ -725,8 +786,10 @@ async function boot() {
     return;
   }
   me = await api<Me>('GET', '/api/me');
+  applySiteTitle();
   header();
   sidebar();
+  footer();
   // Narrow screens: tapping outside the open drawer closes it.
   document.addEventListener('click', (ev) => {
     const t = ev.target as Element | null;
