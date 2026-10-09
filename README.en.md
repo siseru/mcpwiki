@@ -184,9 +184,12 @@ If your browser runs on a different machine, sign in and then paste the final `h
 
 ### Windows
 
-The CLI and the MCP bridge run on Windows as they are (the `npm test` end-to-end suite passes there too).
+The CLI and the MCP bridge run on Windows as they are (the `npm test` end-to-end suite passes there too). You need [Node.js](https://nodejs.org/) 20 or later and Git.
 
 ```cmd
+git clone https://github.com/siseru/mcpwiki.git
+cd mcpwiki
+npm ci --ignore-scripts
 npm run build
 npm install -g .                  :: gives you an "mcpwiki" command (npm writes mcpwiki.cmd)
 mcpwiki configure --env dev --url https://wiki-dev.example.com
@@ -217,6 +220,12 @@ claude mcp add --scope user mcpwiki -- mcpwiki mcp --env dev
 claude mcp list            # mcpwiki should show as Connected
 ```
 
+On Windows, `mcpwiki` is `mcpwiki.cmd`, which MCP clients may fail to start. Start the `.mjs` with `node` instead (adjust the path to where you cloned the repository):
+
+```cmd
+claude mcp add --scope user mcpwiki -- node C:\Users\<user>\mcpwiki\dist\cli\mcpwiki.mjs mcp --env dev
+```
+
 - `--scope user` makes the server available in every directory. Use `--scope project` to register it for one repository only.
 - Restart Claude Code after adding the server, then run `/mcp` to see the connection status and the tool list.
 - Example prompts: "Find the MCPWiki articles about istus and summarize them", "Write today's work up as a new MCPWiki article tagged worklog".
@@ -232,15 +241,21 @@ Add the server under `mcpServers` in `~/.kiro/settings/mcp.json` (all workspaces
       "command": "/usr/bin/node",
       "args": ["/home/<user>/.local/bin/mcpwiki", "mcp", "--env", "dev"],
       "disabled": false,
-      "autoApprove": ["list_articles", "get_article", "search_articles", "list_tags", "get_graph", "get_backlinks"]
+      "autoApprove": ["list_articles", "get_article", "search_articles", "list_tags", "get_graph", "get_backlinks", "list_attachments", "get_attachment"]
     }
   }
 }
 ```
 
-- Use **absolute paths** for `node` and `mcpwiki`, because Kiro may start servers without `~/.local/bin` on the PATH. `which node` and `which mcpwiki` print the paths (`where node` / `where mcpwiki` on Windows, where backslashes also have to be escaped in JSON).
+- Use **absolute paths** for `node` and `mcpwiki`, because Kiro may start servers without `~/.local/bin` on the PATH. `which node` and `which mcpwiki` print the paths.
+- On Windows, put `dist\cli\mcpwiki.mjs` from your clone in `args`, not `mcpwiki.cmd` (the path `where mcpwiki` prints). `where node` prints the path of `node.exe`. Backslashes are written as `\\` in JSON:
+
+  ```json
+  "command": "C:\\Program Files\\nodejs\\node.exe",
+  "args": ["C:\\Users\\<user>\\mcpwiki\\dist\\cli\\mcpwiki.mjs", "mcp", "--env", "dev"],
+  ```
 - Put only the read-only tools in `autoApprove`. Kiro will then ask before running `create_article` or `update_article`.
-- After saving, open MCP SERVERS in the Kiro panel and check that `mcpwiki` is connected and lists 8 tools. Reconnect if it doesn't.
+- After saving, open MCP SERVERS in the Kiro panel and check that `mcpwiki` is connected and lists 10 tools. Reconnect if it doesn't.
 
 ### Common notes
 
