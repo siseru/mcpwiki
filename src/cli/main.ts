@@ -27,13 +27,20 @@ interface Credentials {
   username?: string;
 }
 
-const configDir = join(process.env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'mcpwiki');
+const isWindows = process.platform === 'win32';
+
+// Windows has no XDG convention; %APPDATA% is its per-user configuration directory and, like the rest
+// of the user profile, is ACL-restricted to that user by default.
+const configHome = process.env.XDG_CONFIG_HOME || (isWindows ? process.env.APPDATA : undefined) || join(homedir(), '.config');
+const configDir = join(configHome, 'mcpwiki');
 const configPath = join(configDir, 'config.json');
 const credPath = join(configDir, 'credentials.json');
 
 function ensureDir() {
   if (!existsSync(configDir)) mkdirSync(configDir, { recursive: true, mode: 0o700 });
-  chmodSync(configDir, 0o700);
+  // Windows ignores POSIX modes (chmod only toggles the read-only attribute there); the credentials file
+  // is protected by the inherited ACL of the user profile instead.
+  if (!isWindows) chmodSync(configDir, 0o700);
 }
 
 function readJson<T>(path: string, def: T): T {
@@ -47,7 +54,7 @@ function readJson<T>(path: string, def: T): T {
 function writeSecret(path: string, data: unknown) {
   ensureDir();
   writeFileSync(path, JSON.stringify(data, null, 2) + '\n', { mode: 0o600 });
-  chmodSync(path, 0o600);
+  if (!isWindows) chmodSync(path, 0o600);
 }
 
 const loadConfig = () => readJson<ConfigFile>(configPath, { envs: {} });
@@ -128,9 +135,15 @@ async function tokenRequest(cfg: PublicConfig, params: Record<string, string>): 
 }
 
 function openBrowser(url: string) {
-  const cmd = process.platform === 'darwin' ? 'open' : 'xdg-open';
+  // The URL is partly built from the wiki's /config.json, so it never goes through a shell: "start" is a
+  // cmd.exe builtin, and quoting the URL for cmd would make a `"` in the fetched config an injection point.
+  // rundll32 hands the URL to the default http(s) handler as a single argument (explorer.exe silently
+  // drops it). The scheme is checked because that handler would otherwise accept anything, e.g. a path.
+  if (!/^https?:\/\//.test(url)) return;
+  const cmd = isWindows ? 'rundll32.exe' : process.platform === 'darwin' ? 'open' : 'xdg-open';
+  const args = isWindows ? ['url.dll,FileProtocolHandler', url] : [url];
   try {
-    const child = spawn(cmd, [url], { stdio: 'ignore', detached: true });
+    const child = spawn(cmd, args, { stdio: 'ignore', detached: true });
     child.on('error', () => undefined);
     child.unref();
   } catch {
@@ -207,7 +220,17 @@ async function login(flags: Flags) {
   all[env] = creds;
   writeSecret(credPath, all);
   process.stderr.write(`\nSigned in to ${env} as ${creds.username ?? 'unknown user'}.\n`);
-  process.exit(0);
+  // Exit by draining the event loop, not with process.exit(): on Windows, exiting while stdin has been
+  // read (readline, above) aborts the process with a libuv assertion instead of status 0. The browser's
+  // keep-alive connection outlives server.close(), which is why it has to be dropped explicitly.
+  releaseStdin();
+  for (const s of servers) s.closeAllConnections();
+}
+
+/** Lets the process exit once nothing else is pending, without process.exit(). */
+function releaseStdin() {
+  process.stdin.pause();
+  process.stdin.unref();
 }
 
 async function accessToken(env: string, force = false): Promise<string> {
@@ -268,6 +291,59 @@ function summaryRows(items: any[]): string[][] {
     ['ID', 'VER', 'UPDATED', 'STATUS', 'TITLE'],
     ...items.map((a) => [a.id, String(a.version), String(a.updatedAt).slice(0, 16).replace('T', ' '), a.status, `${a.title}${a.tags?.length ? `  [${a.tags.join(', ')}]` : ''}`]),
   ];
+}
+
+// ------------------------------------------------------------------ editor
+
+/**
+ * Splits $VISUAL / $EDITOR into argv. Whitespace separates arguments, but a double-quoted run stays
+ * together so that `EDITOR='"C:\Program Files\Notepad++\notepad++.exe" -multiInst'` works (editors on
+ * Windows usually live under a path with a space in it).
+ */
+function editorArgv(): string[] {
+  const raw = (process.env.VISUAL || process.env.EDITOR || (isWindows ? 'notepad.exe' : 'vi')).trim();
+  return (raw.match(/"[^"]*"|\S+/g) ?? []).map((t) => (t.startsWith('"') ? t.slice(1, -1) : t));
+}
+
+/**
+ * Resolves a bare command name against PATH the way Windows does: a name without an extension is only
+ * executable once one of the PATHEXT suffixes is appended. Returns undefined if nothing matches.
+ */
+function resolveOnWindowsPath(cmd: string): string | undefined {
+  const exts = (process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean);
+  const dirs = /[\\/]/.test(cmd) ? [''] : (process.env.PATH || '').split(';').filter(Boolean);
+  for (const dir of dirs) {
+    const base = dir ? join(dir, cmd) : cmd;
+    if (extname(base) && existsSync(base)) return base;
+    for (const e of exts) if (existsSync(base + e)) return base + e;
+  }
+  return undefined;
+}
+
+/** Runs the user's editor on `file` and waits for it. Never involves a shell. */
+function runEditor(file: string) {
+  const [cmd, ...args] = editorArgv();
+  if (!cmd) throw new CliError('$EDITOR is empty');
+  args.push(file);
+  let exe = cmd;
+  if (isWindows) {
+    exe = resolveOnWindowsPath(cmd) ?? cmd;
+    // .cmd / .bat shims (e.g. VS Code's "code.cmd") can only be started through cmd.exe: Node refuses to
+    // spawn them directly since 20.12 (CVE-2024-27980). windowsVerbatimArguments keeps Node from re-quoting
+    // the single command-line string cmd.exe expects; /s makes it strip exactly the outer pair of quotes.
+    if (/\.(cmd|bat)$/i.test(exe)) {
+      const line = `"${[exe, ...args].map((a) => `"${a}"`).join(' ')}"`;
+      const res = spawnSync(process.env.COMSPEC || 'cmd.exe', ['/d', '/s', '/c', line], { stdio: 'inherit', windowsVerbatimArguments: true });
+      return checkEditor(res, cmd);
+    }
+  }
+  return checkEditor(spawnSync(exe, args, { stdio: 'inherit' }), cmd);
+}
+
+function checkEditor(res: ReturnType<typeof spawnSync>, cmd: string) {
+  // A failed spawn leaves status null, so reporting only the status would say "exited with status null".
+  if (res.error) throw new CliError(`cannot start editor "${cmd}" (${(res.error as NodeJS.ErrnoException).code ?? res.error.message}); set $EDITOR to an editor that waits, e.g. "notepad.exe"`);
+  if (res.status !== 0) throw new CliError(`editor exited with status ${res.status ?? `signal ${res.signal}`}`);
 }
 
 // ------------------------------------------------------------------ commands
@@ -360,12 +436,12 @@ async function cmdEdit(env: string, id: string, flags: Flags) {
     const file = join(dir, `${id}.md`);
     try {
       writeFileSync(file, original, { mode: 0o600 });
-      // "code --wait" style values are split on whitespace; no shell is involved.
-      const [cmd, ...editorArgs] = (process.env.VISUAL || process.env.EDITOR || 'vi').trim().split(/\s+/);
-      const res = spawnSync(cmd!, [...editorArgs, file], { stdio: 'inherit' });
-      if (res.status !== 0) throw new CliError(`editor exited with status ${res.status}`);
+      runEditor(file);
       const edited = readFileSync(file, 'utf8');
-      if (edited === original) return out('no changes');
+      // Compare the way parseOkfDocument reads the file: editors on Windows often rewrite the whole
+      // document as CRLF (or add a BOM), which must not count as an edit.
+      const norm = (s: string) => s.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n');
+      if (norm(edited) === norm(original)) return out('no changes');
       fields = fieldsFromDocument(edited);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -634,5 +710,8 @@ async function main() {
 
 main().catch((e) => {
   process.stderr.write(`error: ${e instanceof CliError ? e.message : (e as Error).stack ?? String(e)}\n`);
-  process.exit(1);
+  // Same reason as in login(): process.exit(1) after stdin has been read (or inherited by an editor) dies
+  // with a libuv assertion on Windows, so the caller would see 0xC0000409 instead of 1.
+  process.exitCode = 1;
+  releaseStdin();
 });

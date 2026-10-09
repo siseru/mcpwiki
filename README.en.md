@@ -182,6 +182,25 @@ mcpwiki download <id> <file-id>   # save an attachment
 
 If your browser runs on a different machine, sign in and then paste the final `http://localhost:53682/callback?...` URL into the CLI. Tokens are saved to `~/.config/mcpwiki/credentials.json` (mode 0600) and refreshed automatically.
 
+### Windows
+
+The CLI and the MCP bridge run on Windows as they are (the `npm test` end-to-end suite passes there too).
+
+```cmd
+npm run build
+npm install -g .                  :: gives you an "mcpwiki" command (npm writes mcpwiki.cmd)
+mcpwiki configure --env dev --url https://wiki-dev.example.com
+mcpwiki login
+```
+
+Calling `node dist\cli\mcpwiki.mjs <command>` directly works just as well. What differs on Windows:
+
+- Configuration and tokens live in `%APPDATA%\mcpwiki\` (or `XDG_CONFIG_HOME` if you set it). There is no equivalent of the POSIX `0600`; the files inherit the ACL of your user profile.
+- `mcpwiki login` opens your default browser through `rundll32.exe url.dll,FileProtocolHandler`. Use `--no-browser` to open the URL yourself.
+- `mcpwiki edit <id>` defaults to `notepad.exe`. Quote a `VISUAL` / `EDITOR` path that contains spaces, e.g. `set EDITOR="C:\Program Files\Notepad++\notepad++.exe" -multiInst`; `.cmd` wrappers such as `code --wait` work too. The editor must **wait** until you close the file.
+- Markdown passed to `--file` may use CRLF and start with a BOM; both are normalized on read.
+- `npm run build` / `npm test` / `npm run lint` / `npm run typecheck` / `npm run synth` all work from cmd or PowerShell, and CI runs lint, typecheck and the tests on `windows-latest`. Only `scripts/create-admin.sh` needs bash (run it from Git Bash or WSL).
+
 ## MCP
 
 The easiest way to connect an MCP client is the stdio bridge built into the CLI (`mcpwiki mcp`). It uses the CLI's stored credentials and refreshes tokens automatically. Sign in with the CLI first, so that `mcpwiki whoami` works:
@@ -219,7 +238,7 @@ Add the server under `mcpServers` in `~/.kiro/settings/mcp.json` (all workspaces
 }
 ```
 
-- Use **absolute paths** for `node` and `mcpwiki`, because Kiro may start servers without `~/.local/bin` on the PATH. `which node` and `which mcpwiki` print the paths.
+- Use **absolute paths** for `node` and `mcpwiki`, because Kiro may start servers without `~/.local/bin` on the PATH. `which node` and `which mcpwiki` print the paths (`where node` / `where mcpwiki` on Windows, where backslashes also have to be escaped in JSON).
 - Put only the read-only tools in `autoApprove`. Kiro will then ask before running `create_article` or `update_article`.
 - After saving, open MCP SERVERS in the Kiro panel and check that `mcpwiki` is connected and lists 8 tools. Reconnect if it doesn't.
 
