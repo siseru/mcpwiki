@@ -22,7 +22,17 @@ function buildVersion() {
   return 'dev';
 }
 const version = buildVersion();
-const define = { __MCPWIKI_VERSION__: JSON.stringify(version) };
+
+// Footer link: package.json "repository" (string or { url }), normalized to an https URL.
+function repositoryUrl() {
+  const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+  const raw = typeof pkg.repository === 'string' ? pkg.repository : pkg.repository?.url;
+  if (!raw) return '';
+  const url = raw.replace(/^git\+/, '').replace(/\.git$/, '').replace(/^github:/, 'https://github.com/');
+  if (!/^https:\/\/[a-z0-9.-]+\/[A-Za-z0-9._\/-]+$/.test(url)) throw new Error(`package.json repository must be an https URL, got ${raw}`);
+  return url;
+}
+const define = { __MCPWIKI_VERSION__: JSON.stringify(version), __MCPWIKI_REPOSITORY__: JSON.stringify(repositoryUrl()) };
 
 await build({
   entryPoints: [join(root, 'src/backend/handler.ts')],

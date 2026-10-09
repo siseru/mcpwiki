@@ -679,7 +679,7 @@ function footer() {
   clear(el);
   append(el, [
     h('span', null, `MCPWiki ${VERSION}`),
-    h('a', { href: REPOSITORY_URL, target: '_blank', rel: 'noopener noreferrer' }, 'GitHub'),
+    REPOSITORY_URL ? h('a', { href: REPOSITORY_URL, target: '_blank', rel: 'noopener noreferrer' }, 'GitHub') : null,
   ]);
 }
 

@@ -49,7 +49,7 @@ const domainFor = (env: 'dev' | 'prod'): DomainConfig | undefined => {
   return { zoneName: domains.zoneName, hostedZoneId: domains.hostedZoneId, host };
 };
 
-// Shared-account guard rails (deploy manually as an administrator; see README "dev / prod isolation").
+// Shared-account guard rails (deploy manually as an administrator; see docs/deploy.md step 2 and docs/security.md).
 // Cost allocation tags (keys follow the account's active cost allocation tags; extend or override with
 // -c costTags='{"CostCenter":"..."}'). The guard and CI stacks serve both environments.
 const costTagsCtx = app.node.tryGetContext('costTags') as Record<string, string> | string | undefined;
@@ -111,12 +111,31 @@ for (const envName of ['dev', 'prod'] as const) {
 }
 
 const githubRepo = app.node.tryGetContext('githubRepo') as string | undefined;
+/**
+ * The OIDC subject prefix pins the deploy roles to one repository by its numeric ids. A fork that kept this
+ * repository's value would create roles in *its* AWS account that trust *this* repository's workflows, so the
+ * owner/repo names inside the prefix must match the repository being deployed. An empty value falls back to
+ * the name-based default subject (`repo:<owner>/<repo>`).
+ */
+function oidcSubjectPrefix(repo: string): string | undefined {
+  const prefix = (app.node.tryGetContext('githubOidcSubjectPrefix') as string | undefined) || undefined;
+  if (!prefix) return undefined;
+  const m = /^repo:([^@/]+)@\d+\/([^@/]+)@\d+$/.exec(prefix);
+  if (!m) throw new Error(`githubOidcSubjectPrefix must look like repo:<owner>@<owner-id>/<repo>@<repo-id>, got ${prefix}`);
+  if (`${m[1]}/${m[2]}`.toLowerCase() !== repo.toLowerCase()) {
+    throw new Error(
+      `githubOidcSubjectPrefix (${prefix}) belongs to ${m[1]}/${m[2]}, not ${repo}. ` +
+        'Set it to your repository\'s sub_claim_prefix (gh api repos/<owner>/<repo>/actions/oidc/customization/sub) in cdk.json; see docs/deploy.md.',
+    );
+  }
+  return prefix;
+}
 if (githubRepo) {
   const ci = new CiStack(app, 'MCPWiki-ci', {
     env: { account, region },
     githubRepo,
     existingOidcProviderArn: app.node.tryGetContext('githubOidcProviderArn') as string | undefined,
-    subjectPrefix: app.node.tryGetContext('githubOidcSubjectPrefix') as string | undefined,
+    subjectPrefix: oidcSubjectPrefix(githubRepo),
   });
   costTags(ci, 'shared', 'cicd');
 }

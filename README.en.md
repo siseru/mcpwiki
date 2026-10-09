@@ -70,50 +70,23 @@ Each article has a **read scope** and a **write scope**. All permission checks l
 
 ## Setup
 
-Prerequisites: Node.js 20+ (CI runs 24), the AWS CLI, administrator credentials, and the default CDK bootstrap in us-west-2 and us-east-1.
+**[docs/deploy.en.md](docs/deploy.en.md)** walks through building MCPWiki in your own AWS account and deploying it automatically from GitHub Actions: prerequisites, values to change in a fork, the first deployment, the first admin, CI setup, prod releases, troubleshooting and teardown.
+
+In short:
 
 ```bash
-npm ci
-npm test                 # unit + E2E tests (API / MCP / CLI)
-npm run lint             # static security policy checks
+npm ci --ignore-scripts && npm test && npm run lint
+npx cdk bootstrap aws://<account>/<region> aws://<account>/us-east-1   # bootstrap for prod
+npx cdk deploy MCPWiki-guard && node scripts/bootstrap-dev.mjs         # shared-account guard rails and the dev-only bootstrap
+npm run deploy:dev                                                     # dev (custom domains: config/domains.local.json)
+scripts/create-admin.sh dev <username> <email> admin                   # invite the first admin
 ```
 
-### 1. Guard rails for the shared account (once, administrator)
-
-dev and prod share one AWS account. To make sure a compromised dev pipeline can't reach prod or anything else in the account, dev uses its own CDK bootstrap and a permissions boundary. See [docs/security.en.md](docs/security.en.md#dev--prod-isolation-shared-account) for details.
-
-```bash
-npm run build
-npx cdk deploy MCPWiki-guard          # permissions boundary MCPWikiDevBoundary
-node scripts/bootstrap-dev.mjs        # dev-only bootstrap (qualifier mwdev); every role gets the boundary
-```
-
-![CI/CD and isolation](docs/images/cicd-security.png)
-
-### 2. Custom domain (optional)
-
-Copy `config/domains.example.json` to `config/domains.local.json`. The `.local.json` file is ignored by git.
-
-```json
-{ "zoneName": "example.com", "hostedZoneId": "Z0123456789EXAMPLE", "hosts": { "dev": "wiki-dev.example.com", "prod": "wiki.example.com" } }
-```
-
-- `MCPWiki-<env>-edge` (us-east-1) creates the ACM certificate for `<host>` and `auth.<host>`, plus the CAA records. The DNS validation records stay in place, so ACM **renews the certificate automatically**. An alarm fires if fewer than 30 days remain.
-- CloudFront serves `<host>` with `TLSv1.2_2021`, and the login UI moves to `auth.<host>`. `*.cloudfront.net` returns a 308 redirect to `<host>`.
-- If no domain is configured, the wiki keeps running on `*.cloudfront.net`.
-
-### 3. Deploy
-
-```bash
-npm run deploy:dev       # MCPWiki-dev-edge + MCPWiki-dev
-npm run deploy:prod      # MCPWiki-prod-edge (certificate + WAF) + MCPWiki-prod
-scripts/create-admin.sh dev <username> <email> admin   # invite the first admin
-```
-
-Sign in with the temporary password from the invitation email, then change the password and register TOTP. Invite further users from the admin UI (`/admin`).
-Set the alarm recipient with `MCPWIKI_ALARM_EMAIL=ops@example.com` (or `-c alarmEmail=...`). If it's missing for prod, synth prints a warning.
+After that, merging to `main` deploys dev and pushing a `v*` tag (two approvals) deploys prod.
 
 ## CI/CD and continuous security review
+
+![CI/CD and isolation](docs/images/cicd-security.png)
 
 | Workflow | Runs on | What it does |
 |---|---|---|
@@ -128,37 +101,7 @@ Set the alarm recipient with `MCPWIKI_ALARM_EMAIL=ops@example.com` (or `-c alarm
 
  Every action is pinned to a commit SHA, and Dependabot keeps the pins up to date.
 
-### One-time GitHub setup
-
-1. Create the deploy roles: `npx cdk deploy MCPWiki-ci -c githubRepo=<owner>/<repo>`
-2. Add the git ref to the OIDC subject. The role trust policies require both the environment and the ref to match.
-   ```bash
-   gh api -X PUT repos/<owner>/<repo>/actions/oidc/customization/sub \
-     --input - <<< '{"use_default":false,"include_claim_keys":["repo","context","ref"]}'
-   gh api repos/<owner>/<repo>/actions/oidc/customization/sub    # check sub_claim_prefix
-   ```
-   GitHub uses an immutable subject that contains numeric ids: `repo:<owner>@<owner-id>/<repo>@<repo-id>`. Put the printed `sub_claim_prefix` into `context.githubOidcSubjectPrefix` in `cdk.json`, then redeploy the CI stack from step 1. A rename, or someone re-creating a repository with the same name, then cannot assume the roles.
-3. When ready, set the repository variable `DEPLOY_ENABLED=true`; until then the Deploy workflow is skipped. Register environment-specific values as **secrets**: the repository secrets `AWS_ACCOUNT_ID`, `MCPWIKI_DOMAINS` (optional) and `MCPWIKI_ALARM_EMAIL`, and the environment secret `AWS_DEPLOY_ROLE_ARN` (from the stack outputs) on both `dev` and `prod`. Only `AWS_REGION` may be a repository variable. The runner prints each step's environment before masks take effect, so values stored as variables (vars) would appear in public logs. lint rejects reading them from vars.
-4. Add the secret `ARTIFACT_ENCRYPTION_KEY` to both the `dev` and `prod` environments, with a different value for each. It encrypts the deploy artifact (the synthesized assembly); deploys fail if it's missing.
-   ```bash
-   openssl rand -hex 32 | gh secret set ARTIFACT_ENCRYPTION_KEY --env dev  -R <owner>/<repo>
-   openssl rand -hex 32 | gh secret set ARTIFACT_ENCRYPTION_KEY --env prod -R <owner>/<repo>
-   ```
-5. On `prod`, set **Required reviewers** and allow deployments only from `v*` tags. On `dev`, allow deployments only from `main`. While there is only one maintainer, do **not** enable "Prevent self-review": you would be unable to approve, and therefore to deploy, prod.
-6. Optional: set the secret `DEV_URL` as the ZAP target. For the AI review, set `ENABLE_AI_SECURITY_REVIEW=true` and the secret `ANTHROPIC_API_KEY`. To keep ZAP reports, also add a repository secret `ARTIFACT_ENCRYPTION_KEY`; the reports are stored encrypted.
-
-### Making the repository public
-
-Anyone can read the Actions logs, job summaries and artifacts of a public repository. The workflows therefore mask and redact environment-specific values (account id, hosted zone, host names, user pool ids and similar) with `scripts/ci/mask.sh` and `scripts/ci/redact.mjs`, and encrypt the synthesized assembly with `scripts/ci/seal.sh`. lint enforces both. Before going public, configure the following on GitHub:
-
-| Setting | Where | What |
-|---|---|---|
-| Branch protection | Settings → Rules → Rulesets (`main`) | Require a PR (0 approvals is fine). Required checks: CI `test`, both CodeQL jobs, and the Security jobs. Block force pushes and deletion. |
-| Tag protection | Rulesets (tag, `v*`) | Only admins may create, update or delete (prod deploys run from tags) |
-| Fork PRs | Settings → Actions → General | "Require approval for all external contributors"; Workflow permissions set to "Read repository contents" |
-| Scanning | Settings → Advanced Security | Enable code scanning, secret scanning with push protection, and private vulnerability reporting. Set the repository variable `CODE_SCANNING_ENABLED=true`. |
-
-Anyone can open issues and pull requests; only people with write access (the maintainers) can merge. See [CONTRIBUTING.md](CONTRIBUTING.md).
+For the one-time GitHub setup (OIDC, secrets, Environments) and the protection settings for a public repository (rulesets, tag protection, PRs from forks), see [docs/deploy.en.md](docs/deploy.en.md#6-deploy-from-github-actions). Anyone can open issues and pull requests; only people with write access (maintainers) can merge. See [CONTRIBUTING.md](CONTRIBUTING.md) for how to contribute.
 
 ## CLI
 

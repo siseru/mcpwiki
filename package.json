@@ -1,6 +1,10 @@
 {
   "name": "mcpwiki",
   "version": "0.1.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/siseru/mcpwiki.git"
+  },
   "description": "Lightweight serverless wiki designed for LLM / MCP integration (OKF compatible)",
   "license": "Apache-2.0",
   "private": true,
