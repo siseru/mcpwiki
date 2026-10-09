@@ -52,7 +52,8 @@ test('CLI commands and MCP stdio bridge', { skip: !existsSync(cliPath) && 'run n
   const env = { ...process.env, XDG_CONFIG_HOME: home, MCPWIKI_ENV: '' };
   const runWith = (extraEnv: Record<string, string>, ...args: string[]) =>
     new Promise<{ code: number; stdout: string; stderr: string }>((resolve) => {
-      const p = spawn(process.execPath, [cliPath, ...args], { env: { ...env, ...extraEnv } });
+      // cwd = the temp home: a fake editor (or anything else the CLI starts) must never write into the repository.
+      const p = spawn(process.execPath, [cliPath, ...args], { cwd: home, env: { ...env, ...extraEnv } });
       let stdout = '';
       let stderr = '';
       p.stdout.on('data', (d) => (stdout += d));
@@ -144,7 +145,7 @@ test('CLI commands and MCP stdio bridge', { skip: !existsSync(cliPath) && 'run n
     assert.equal(exp.code, 0, exp.stderr);
 
     // MCP over stdio
-    const p = spawn(process.execPath, [cliPath, 'mcp'], { env });
+    const p = spawn(process.execPath, [cliPath, 'mcp'], { cwd: home, env });
     const lines: any[] = [];
     let buf = '';
     p.stdout.on('data', (d) => {

@@ -103,7 +103,7 @@ IAM Policy Simulator で確認済みの結果: 境界下のロールからの pr
 
 | 層 | 仕組み |
 |---|---|
-| コード | CodeQL (security-extended。CLI の仕様であるファイル↔HTTP の 2 ルールだけを `.github/codeql/codeql-config.yml` で理由付きで除外し、Windows の `.cmd` エディタ起動の 1 件だけを `codeql.yml` のゲートで「ルール + ファイル」を指定して理由付きで承認済みとして扱う。承認済みの指摘も notice として毎回出力するので、不要になれば気付けます)、独自の lint（XSS につながる API、トークンの保存先、依存の許可リスト、MCP / CLI の削除禁止、ログに秘密を残さない）、セキュリティ回帰テスト（`test/security.test.ts`） |
+| コード | CodeQL (security-extended。CLI の仕様であるファイル↔HTTP の 2 ルールだけを `.github/codeql/codeql-config.yml` で理由付きで除外し、Windows の `.cmd` エディタ起動の 1 件だけを `codeql.yml` のゲートで「ルール + ファイル + 指摘の fingerprint」を指定して理由付きで承認済みとして扱う。承認済みの指摘も notice として毎回出力するので、不要になれば気付けます)、独自の lint（XSS につながる API、トークンの保存先、依存の許可リスト、MCP / CLI の削除禁止、ログに秘密を残さない）、セキュリティ回帰テスト（`test/security.test.ts`） |
 | 依存 | `npm audit`（実行時の依存）、`npm audit signatures`、Dependency Review（PR）、Dependabot（npm と Actions） |
 | 秘密情報 | gitleaks（全履歴）、GitHub の Secret scanning と push protection |
 | IaC | cdk-nag（AwsSolutions。例外はすべて理由を記録）、checkov（合成済みテンプレート。除外は `.checkov.yaml` に理由付きで記載） |
