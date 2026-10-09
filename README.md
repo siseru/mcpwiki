@@ -182,9 +182,12 @@ mcpwiki download <id> <ファイルID> # 添付の保存
 
 ### Windows
 
-CLI と MCP ブリッジは Windows でもそのまま動きます（`npm test` の E2E も Windows で通ります）。
+CLI と MCP ブリッジは Windows でもそのまま動きます（`npm test` の E2E も Windows で通ります）。前提は [Node.js](https://nodejs.org/) 20 以上と Git です。
 
 ```cmd
+git clone https://github.com/siseru/mcpwiki.git
+cd mcpwiki
+npm ci --ignore-scripts
 npm run build
 npm install -g .                  :: mcpwiki コマンド（npm が mcpwiki.cmd を作ります）
 mcpwiki configure --env dev --url https://wiki-dev.example.com
@@ -215,6 +218,12 @@ claude mcp add --scope user mcpwiki -- mcpwiki mcp --env dev
 claude mcp list            # mcpwiki が Connected になっていることを確認
 ```
 
+Windows では `mcpwiki` が `mcpwiki.cmd` になり、MCP クライアントからは起動できないことがあります。`node` で `.mjs` を直接起動してください（パスは clone した場所に合わせます）。
+
+```cmd
+claude mcp add --scope user mcpwiki -- node C:\Users\<user>\mcpwiki\dist\cli\mcpwiki.mjs mcp --env dev
+```
+
 - `--scope user` を付けると、どのディレクトリで起動しても使えます（リポジトリ単位にしたい場合は `--scope project`）。
 - 登録後に Claude Code を起動し直し、`/mcp` で接続状態とツールの一覧を確認します。
 - 例:「MCPWiki で istus の記事を探して要約して」「今日の作業を MCPWiki に記事としてまとめて。タグは worklog」
@@ -230,15 +239,21 @@ claude mcp list            # mcpwiki が Connected になっていることを�
       "command": "/usr/bin/node",
       "args": ["/home/<user>/.local/bin/mcpwiki", "mcp", "--env", "dev"],
       "disabled": false,
-      "autoApprove": ["list_articles", "get_article", "search_articles", "list_tags", "get_graph", "get_backlinks"]
+      "autoApprove": ["list_articles", "get_article", "search_articles", "list_tags", "get_graph", "get_backlinks", "list_attachments", "get_attachment"]
     }
   }
 }
 ```
 
-- Kiro の起動環境では `~/.local/bin` が PATH に入っていないことがあるので、`node` と `mcpwiki` は**絶対パス**で書きます（`which node` と `which mcpwiki`、Windows では `where node` と `where mcpwiki` で確認できます。JSON にはバックスラッシュをエスケープして書きます）。
+- Kiro の起動環境では `~/.local/bin` が PATH に入っていないことがあるので、`node` と `mcpwiki` は**絶対パス**で書きます（`which node` と `which mcpwiki` で確認できます）。
+- Windows では、`args` に `mcpwiki.cmd`（`where mcpwiki` が返すパス）ではなく、clone した場所の `dist\cli\mcpwiki.mjs` を書きます。`node.exe` のパスは `where node` で確認します。JSON ではバックスラッシュを `\\` と書きます。
+
+  ```json
+  "command": "C:\\Program Files\\nodejs\\node.exe",
+  "args": ["C:\\Users\\<user>\\mcpwiki\\dist\\cli\\mcpwiki.mjs", "mcp", "--env", "dev"],
+  ```
 - `autoApprove` には読み取り用のツールだけを入れます。作成（`create_article`）と更新（`update_article`）は、実行前に Kiro が確認を求めます。
-- 保存したら、Kiro パネルの MCP SERVERS で `mcpwiki` が接続済みになり、8 個のツールが表示されることを確認します（表示されなければ再接続します）。
+- 保存したら、Kiro パネルの MCP SERVERS で `mcpwiki` が接続済みになり、10 個のツールが表示されることを確認します（表示されなければ再接続します）。
 
 ### 共通の注意
 
