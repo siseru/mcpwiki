@@ -320,19 +320,36 @@ function resolveOnWindowsPath(cmd: string): string | undefined {
   return undefined;
 }
 
-/** Runs the user's editor on `file` and waits for it. Never involves a shell. */
+/**
+ * Characters that can end one cmd.exe command and begin another. Only the .cmd / .bat case below hands a
+ * command line to a shell, and everything on that line is either a path that exists on disk (a Windows
+ * path cannot contain any of these) or a flag the user put in $EDITOR, so rejecting them costs nothing.
+ */
+const cmdUnsafe = /["&|<>^%!\r\n]/;
+
+/** Runs the user's editor on `file` and waits for it. Only .cmd / .bat shims involve a shell. */
 function runEditor(file: string) {
   const [cmd, ...args] = editorArgv();
   if (!cmd) throw new CliError('$EDITOR is empty');
   args.push(file);
   let exe = cmd;
   if (isWindows) {
-    exe = resolveOnWindowsPath(cmd) ?? cmd;
-    // .cmd / .bat shims (e.g. VS Code's "code.cmd") can only be started through cmd.exe: Node refuses to
-    // spawn them directly since 20.12 (CVE-2024-27980). windowsVerbatimArguments keeps Node from re-quoting
-    // the single command-line string cmd.exe expects; /s makes it strip exactly the outer pair of quotes.
-    if (/\.(cmd|bat)$/i.test(exe)) {
-      const line = `"${[exe, ...args].map((a) => `"${a}"`).join(' ')}"`;
+    const resolved = resolveOnWindowsPath(cmd);
+    exe = resolved ?? cmd;
+    // .cmd / .bat shims can only be started through cmd.exe: Node refuses to spawn them directly since
+    // 20.12 (CVE-2024-27980). That is the only way to use VS Code, whose Windows entry point is a shim
+    // (`Code.exe --wait` is rejected by the executable itself). `resolved`, not `exe`, so that only a path
+    // that exists on disk reaches the command line; windowsVerbatimArguments keeps Node from re-quoting the
+    // single string cmd.exe expects, and /s makes it strip exactly the outer pair of quotes.
+    if (resolved && /\.(cmd|bat)$/i.test(resolved)) {
+      for (const a of [resolved, ...args]) {
+        if (cmdUnsafe.test(a)) throw new CliError(`refusing to run "${cmd}" through cmd.exe: ${JSON.stringify(a)} contains a shell metacharacter`);
+      }
+      const line = `"${[resolved, ...args].map((a) => `"${a}"`).join(' ')}"`;
+      // Reviewed: the loop above rejects every character that could break out of this quoting, and the
+      // executable is a path that exists. CodeQL does not recognize that check, so the finding is also
+      // listed as a reviewed exception in .github/workflows/codeql.yml.
+      // codeql[js/indirect-command-line-injection]
       const res = spawnSync(process.env.COMSPEC || 'cmd.exe', ['/d', '/s', '/c', line], { stdio: 'inherit', windowsVerbatimArguments: true });
       return checkEditor(res, cmd);
     }
