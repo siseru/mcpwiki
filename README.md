@@ -68,50 +68,23 @@ LLM / MCP から使うことを前提にした、軽量なサーバーレス Wik
 
 ## セットアップ
 
-前提: Node.js 20 以上（CI は 24）、AWS CLI、管理者権限の資格情報、既定の CDK bootstrap（us-west-2 と us-east-1）。
+自分の AWS アカウントへの構築から、GitHub Actions による自動デプロイまでの手順は **[docs/deploy.md](docs/deploy.md)** にまとめています（前提、fork で書き換える値、初回デプロイ、最初の管理者、CI の設定、prod のリリース、トラブルシューティング、撤去）。
+
+概要:
 
 ```bash
-npm ci
-npm test                 # 単体テストと結合テスト（API / MCP / CLI を E2E で確認）
-npm run lint             # セキュリティポリシーの静的チェック
+npm ci --ignore-scripts && npm test && npm run lint
+npx cdk bootstrap aws://<account>/<region> aws://<account>/us-east-1   # prod 用の bootstrap
+npx cdk deploy MCPWiki-guard && node scripts/bootstrap-dev.mjs         # 共有アカウントの境界と dev 専用の bootstrap
+npm run deploy:dev                                                     # dev（独自ドメインは config/domains.local.json）
+scripts/create-admin.sh dev <username> <email> admin                   # 最初の管理者を招待
 ```
 
-### 1. 共有アカウントの境界（初回のみ・管理者が実施）
-
-dev と prod は同じ AWS アカウントに置いています。dev のパイプラインが侵害されても prod や他のリソースに届かないよう、dev には専用の CDK bootstrap と permissions boundary を使います。詳しくは [docs/security.md](docs/security.md#dev--prod-の分離共有アカウント) を参照してください。
-
-```bash
-npm run build
-npx cdk deploy MCPWiki-guard          # 権限境界 MCPWikiDevBoundary
-node scripts/bootstrap-dev.mjs        # dev 専用 bootstrap (qualifier mwdev)。全ロールに境界を付ける
-```
-
-![CI/CD and isolation](docs/images/cicd-security.png)
-
-### 2. 独自ドメイン（任意）
-
-`config/domains.example.json` をコピーして `config/domains.local.json`（Git 管理外）を作ります。
-
-```json
-{ "zoneName": "example.com", "hostedZoneId": "Z0123456789EXAMPLE", "hosts": { "dev": "wiki-dev.example.com", "prod": "wiki.example.com" } }
-```
-
-- us-east-1 の `MCPWiki-<env>-edge` が ACM 証明書（`<host>`、`auth.<host>`）と CAA レコードを作ります。DNS 検証のレコードを残し続けるので、ACM が**自動で更新**します。残り 30 日を切るとアラームが鳴ります。
-- CloudFront は `<host>` で配信し（`TLSv1.2_2021`）、ログイン画面は `auth.<host>` になります。`*.cloudfront.net` は `<host>` へ 308 でリダイレクトします。
-- 設定が無ければ `*.cloudfront.net` のまま動作します。
-
-### 3. デプロイ
-
-```bash
-npm run deploy:dev       # MCPWiki-dev-edge + MCPWiki-dev
-npm run deploy:prod      # MCPWiki-prod-edge (証明書 + WAF) + MCPWiki-prod
-scripts/create-admin.sh dev <username> <email> admin   # 最初の管理者を招待
-```
-
-招待メールの仮パスワードでサインインし、パスワード変更と TOTP 登録を行います。以降のユーザは管理画面（`/admin`）から招待できます。
-アラームの通知先は `MCPWIKI_ALARM_EMAIL=ops@example.com`（または `-c alarmEmail=...`）で指定します。prod で未設定のときは synth 時に警告が出ます。
+以降は、`main` へのマージで dev に、`v*` タグの push（承認 2 回）で prod にデプロイします。
 
 ## CI/CD とセキュリティレビュー
+
+![CI/CD and isolation](docs/images/cicd-security.png)
 
 | ワークフロー | 契機 | 内容 |
 |---|---|---|
@@ -126,37 +99,7 @@ scripts/create-admin.sh dev <username> <email> admin   # 最初の管理者を�
 
 アクションはすべてコミット SHA で固定し、Dependabot が更新します。
 
-### GitHub 側の初期設定（初回のみ）
-
-1. デプロイロールを作ります: `npx cdk deploy MCPWiki-ci -c githubRepo=<owner>/<repo>`
-2. OIDC の `sub` に ref を含めます（ロールの信頼条件は `environment` と `ref` の両方を要求します）。
-   ```bash
-   gh api -X PUT repos/<owner>/<repo>/actions/oidc/customization/sub \
-     --input - <<< '{"use_default":false,"include_claim_keys":["repo","context","ref"]}'
-   gh api repos/<owner>/<repo>/actions/oidc/customization/sub    # sub_claim_prefix を確認
-   ```
-   GitHub は、ID を含む変更不能な `sub`（`repo:<owner>@<owner-id>/<repo>@<repo-id>`）を使います。表示された `sub_claim_prefix` を `cdk.json` の `context.githubOidcSubjectPrefix` に設定し、手順 1 の CI スタックをデプロイし直してください。名前を変更されたり、同じ名前のリポジトリを第三者に作られたりしても、ロールを引き受けられません。
-3. 準備が整ったら、リポジトリ変数 `DEPLOY_ENABLED=true` を設定します（設定するまで Deploy ワークフローはスキップされます）。環境固有の値は**シークレット**として登録します。リポジトリのシークレットに `AWS_ACCOUNT_ID`、`MCPWIKI_DOMAINS`（任意）、`MCPWIKI_ALARM_EMAIL` を、Environments の `dev` と `prod` のシークレットに `AWS_DEPLOY_ROLE_ARN`（スタック出力）を登録します。`AWS_REGION` だけはリポジトリの変数で構いません。変数（vars）は、マスクが効く前にランナーが各ステップの環境変数として表示するので、公開ログに値が出てしまいます。lint で、vars から読むことを禁止しています。
-4. Environments の `dev` と `prod` に、シークレット `ARTIFACT_ENCRYPTION_KEY` を登録します（環境ごとに別の値）。Deploy の artifact（合成済みのアセンブリ）を暗号化する鍵で、未設定だとデプロイは失敗します。
-   ```bash
-   openssl rand -hex 32 | gh secret set ARTIFACT_ENCRYPTION_KEY --env dev  -R <owner>/<repo>
-   openssl rand -hex 32 | gh secret set ARTIFACT_ENCRYPTION_KEY --env prod -R <owner>/<repo>
-   ```
-5. `prod` には **Required reviewers** を設定し、デプロイ元を `v*` タグに限定します。`dev` は `main` に限定します。メンテナが 1 人のあいだは「Prevent self-review」を有効にしないでください（自分で承認できなくなり、prod にデプロイできなくなります）。
-6. 任意: シークレット `DEV_URL`（ZAP の対象）と、`ENABLE_AI_SECURITY_REVIEW=true` + シークレット `ANTHROPIC_API_KEY`（AI レビュー）を設定します。ZAP のレポートを保存する場合は、リポジトリのシークレット `ARTIFACT_ENCRYPTION_KEY` も設定します（暗号化して保存します）。
-
-### 公開リポジトリにする場合
-
-Public リポジトリでは、Actions のログ、ジョブのサマリ、artifact を誰でも読めます。このため、環境固有の値（アカウント ID、ホストゾーン、ホスト名、User Pool ID など）は、ワークフローの中でマスクと伏せ字にしています（`scripts/ci/mask.sh`、`scripts/ci/redact.mjs`）。合成済みのアセンブリは暗号化しています（`scripts/ci/seal.sh`）。どちらも lint で強制しています。公開する前に、GitHub で次の設定を行ってください。
-
-| 設定 | 場所 | 内容 |
-|---|---|---|
-| ブランチ保護 | Settings → Rules → Rulesets（`main`） | PR 必須（承認 0 件で可）、必須チェック（CI `test`、CodeQL の 2 ジョブ、Security の各ジョブ）、force push 禁止、削除禁止 |
-| タグ保護 | Rulesets（tag、`v*`） | 作成・更新・削除を管理者だけに制限（prod へのデプロイはタグで動くため） |
-| fork の PR | Settings → Actions → General | 「Require approval for all external contributors」。Workflow permissions は「Read repository contents」 |
-| コードスキャン | Settings → Advanced Security | Code scanning、Secret scanning と push protection、Private vulnerability reporting を有効化。リポジトリ変数 `CODE_SCANNING_ENABLED=true` |
-
-Issue と PR は誰でも作成できます。マージは、書き込み権限を持つ人（メンテナ）だけが行えます。貢献の手順は [CONTRIBUTING.md](CONTRIBUTING.md) を参照してください。
+GitHub 側の初期設定（OIDC、シークレット、Environments）と、公開リポジトリにする場合の保護設定（Rulesets、タグ保護、fork の PR）は [docs/deploy.md](docs/deploy.md#6-github-actions-からデプロイする) を参照してください。Issue と PR は誰でも作成できます。マージは、書き込み権限を持つ人（メンテナ）だけが行えます。貢献の手順は [CONTRIBUTING.md](CONTRIBUTING.md) を参照してください。
 
 ## CLI
 
