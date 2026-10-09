@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,6 +10,7 @@ import type { AddressInfo } from 'node:net';
 import { CLI, makeToken, setup, users } from './helpers.js';
 
 const cliPath = join(process.cwd(), 'dist/cli/mcpwiki.mjs');
+const isWindows = process.platform === 'win32';
 
 test('CLI commands and MCP stdio bridge', { skip: !existsSync(cliPath) && 'run npm run build first' }, async () => {
   const { app, blobs } = setup();
@@ -51,7 +52,8 @@ test('CLI commands and MCP stdio bridge', { skip: !existsSync(cliPath) && 'run n
   const env = { ...process.env, XDG_CONFIG_HOME: home, MCPWIKI_ENV: '' };
   const runWith = (extraEnv: Record<string, string>, ...args: string[]) =>
     new Promise<{ code: number; stdout: string; stderr: string }>((resolve) => {
-      const p = spawn(process.execPath, [cliPath, ...args], { env: { ...env, ...extraEnv } });
+      // cwd = the temp home: a fake editor (or anything else the CLI starts) must never write into the repository.
+      const p = spawn(process.execPath, [cliPath, ...args], { cwd: home, env: { ...env, ...extraEnv } });
       let stdout = '';
       let stderr = '';
       p.stdout.on('data', (d) => (stdout += d));
@@ -61,6 +63,12 @@ test('CLI commands and MCP stdio bridge', { skip: !existsSync(cliPath) && 'run n
   const run = (...args: string[]) => runWith({}, ...args);
   try {
     assert.equal((await run('configure', '--env', 'local', '--url', url)).code, 0);
+    // Without XDG_CONFIG_HOME the config goes to the platform's own directory: %APPDATA% on Windows
+    // (which has no XDG convention), ~/.config elsewhere.
+    const altHome = mkdtempSync(join(tmpdir(), 'mcpwiki-home-'));
+    const alt = await runWith({ XDG_CONFIG_HOME: '', ...(isWindows ? { APPDATA: altHome } : { HOME: altHome }) }, 'configure', '--env', 'alt', '--url', url);
+    assert.equal(alt.code, 0, alt.stderr);
+    assert.ok(existsSync(join(altHome, isWindows ? 'mcpwiki' : '.config/mcpwiki', 'config.json')), alt.stdout);
     assert.match((await run('list')).stderr, /not signed in/);
     const token = makeToken({ sub: users.alice.sub, username: 'alice', 'cognito:groups': ['editor'], client_id: CLI });
     writeFileSync(join(home, 'mcpwiki/credentials.json'), JSON.stringify({ local: { accessToken: token, expiresAt: Date.now() + 3600_000 } }));
@@ -71,6 +79,12 @@ test('CLI commands and MCP stdio bridge', { skip: !existsSync(cliPath) && 'run n
     const c = await run('create', '--file', doc, '--id', 'cli-doc');
     assert.equal(c.code, 0, c.stderr);
     assert.match(c.stdout, /created cli-doc \(version 1\)/);
+    // A document written by a Windows editor (BOM + CRLF) must parse like any other.
+    const crlf = join(home, 'crlf.md');
+    writeFileSync(crlf, '\uFEFF---\r\ntitle: CRLF記事\r\ntags: [crlf]\r\n---\r\n\r\n本文です。\r\n');
+    const c2 = await run('create', '--file', crlf, '--id', 'cli-crlf');
+    assert.equal(c2.code, 0, c2.stderr);
+    assert.match((await run('get', 'cli-crlf')).stdout, /^---\ntype: Wiki Article\ntitle: CRLF記事\n/);
     const list = await run('list');
     assert.match(list.stdout, /cli-doc\s+1 .*CLI記事 {2}\[cli, test\]/);
     const get = await run('get', 'cli-doc');
@@ -78,13 +92,35 @@ test('CLI commands and MCP stdio bridge', { skip: !existsSync(cliPath) && 'run n
     const edit = await run('edit', 'cli-doc', '--title', 'Renamed');
     assert.equal(edit.code, 0, edit.stderr);
     assert.match(edit.stdout, /version 2/);
-    // edit via EDITOR: a script that appends a line
-    const editor = join(home, 'ed.sh');
-    writeFileSync(editor, '#!/bin/sh\necho "追記" >> "$1"\n', { mode: 0o755 });
+    // edit via EDITOR: a script that appends a line. On Windows that is a .cmd shim, which the CLI has to
+    // start through cmd.exe (Node refuses to spawn .cmd directly since 20.12). It appends by copying a
+    // UTF-8 file rather than with `echo`, whose output depends on the console code page.
+    const editor = join(home, isWindows ? 'ed.cmd' : 'ed.sh');
+    writeFileSync(join(home, 'append.md'), '\n追記\n');
+    writeFileSync(editor, isWindows ? `@echo off\r\ntype "${join(home, 'append.md')}" >>%1\r\n` : '#!/bin/sh\necho "追記" >> "$1"\n', { mode: 0o755 });
     // (must be async: the server runs in this process)
     const ed = await runWith({ EDITOR: editor }, 'edit', 'cli-doc');
     assert.equal(ed.code, 0, ed.stderr);
     assert.match((await run('get', 'cli-doc', '--json')).stdout, /追記/);
+    // $EDITOR may be a quoted path containing spaces ("C:\Program Files\...\notepad++.exe" is the norm
+    // on Windows), and a missing editor must say so rather than "exited with status null".
+    const spaced = join(home, 'my editor', isWindows ? 'ed.cmd' : 'ed.sh');
+    mkdirSync(join(home, 'my editor'));
+    copyFileSync(editor, spaced);
+    const ed2 = await runWith({ EDITOR: `"${spaced}"` }, 'edit', 'cli-doc');
+    assert.equal(ed2.code, 0, ed2.stderr);
+    const noEditor = await runWith({ EDITOR: 'mcpwiki-no-such-editor' }, 'edit', 'cli-doc');
+    assert.match(noEditor.stderr, /cannot start editor "mcpwiki-no-such-editor" \(ENOENT\)/);
+    // Plain status 1, not 0xC0000409: on Windows, process.exit() after stdin has been read or inherited
+    // aborts with a libuv assertion.
+    assert.equal(noEditor.code, 1, noEditor.stderr);
+    if (isWindows) {
+      // A .cmd editor is started through cmd.exe, so nothing on that command line may carry a character
+      // that could end the command. An `&` in a flag must be refused, not passed to the shell.
+      const meta = await runWith({ EDITOR: `"${editor}" a&b` }, 'edit', 'cli-doc');
+      assert.match(meta.stderr, /contains a shell metacharacter/);
+      assert.equal(meta.code, 1, meta.stderr);
+    }
     assert.match((await run('search', '本文')).stdout, /cli-doc {2}Renamed/);
     assert.match((await run('tags')).stdout, /1\s+cli/);
     assert.match((await run('history', 'cli-doc')).stdout, /3 .*alice\s+cli\s+update/);
@@ -99,7 +135,7 @@ test('CLI commands and MCP stdio bridge', { skip: !existsSync(cliPath) && 'run n
     const fake = join(home, 'fake.png');
     writeFileSync(fake, '<html>not a png</html>');
     assert.match((await run('attach', 'cli-doc', fake)).stderr, /does not look like image\/png/);
-    assert.match((await run('attach', 'cli-doc', join(home, 'ed.sh'))).stderr, /unsupported file type/);
+    assert.match((await run('attach', 'cli-doc', editor)).stderr, /unsupported file type/);
     assert.match((await run('attachments', 'cli-doc')).stdout, new RegExp(`${md![1]}\\s+72\\s+image/png\\s+shot\\.png`));
     const outFile = join(home, 'dl.png');
     assert.equal((await run('download', 'cli-doc', md![1]!, '--out', outFile)).code, 0);
@@ -109,7 +145,7 @@ test('CLI commands and MCP stdio bridge', { skip: !existsSync(cliPath) && 'run n
     assert.equal(exp.code, 0, exp.stderr);
 
     // MCP over stdio
-    const p = spawn(process.execPath, [cliPath, 'mcp'], { env });
+    const p = spawn(process.execPath, [cliPath, 'mcp'], { cwd: home, env });
     const lines: any[] = [];
     let buf = '';
     p.stdout.on('data', (d) => {
