@@ -113,6 +113,13 @@ test('CLI commands and MCP stdio bridge', { skip: !existsSync(cliPath) && 'run n
     // Plain status 1, not 0xC0000409: on Windows, process.exit() after stdin has been read or inherited
     // aborts with a libuv assertion.
     assert.equal(noEditor.code, 1, noEditor.stderr);
+    if (isWindows) {
+      // A .cmd editor is started through cmd.exe, so nothing on that command line may carry a character
+      // that could end the command. An `&` in a flag must be refused, not passed to the shell.
+      const meta = await runWith({ EDITOR: `"${editor}" a&b` }, 'edit', 'cli-doc');
+      assert.match(meta.stderr, /contains a shell metacharacter/);
+      assert.equal(meta.code, 1, meta.stderr);
+    }
     assert.match((await run('search', '本文')).stdout, /cli-doc {2}Renamed/);
     assert.match((await run('tags')).stdout, /1\s+cli/);
     assert.match((await run('history', 'cli-doc')).stdout, /3 .*alice\s+cli\s+update/);
