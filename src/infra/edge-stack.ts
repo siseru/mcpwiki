@@ -6,7 +6,6 @@ import {
   aws_logs as logs,
   aws_route53 as route53,
   aws_sns as sns,
-  aws_sns_subscriptions as subs,
   aws_wafv2 as waf,
 } from 'aws-cdk-lib';
 import type { Construct } from 'constructs';
@@ -58,7 +57,9 @@ export class EdgeStack extends Stack {
 
       // Alert if renewal ever fails (ACM normally renews ~60 days before expiry).
       const topic = new sns.Topic(this, 'CertAlarms', { displayName: `MCPWiki ${props.envName} certificate alarms`, enforceSSL: true });
-      if (props.alarmEmail) topic.addSubscription(new subs.EmailSubscription(props.alarmEmail));
+      // Fixed construct id: EmailSubscription derives the logical id from the address, which then shows up in
+      // public deploy logs (lint forbids it).
+      if (props.alarmEmail) new sns.Subscription(this, 'CertAlarmEmail', { topic, protocol: sns.SubscriptionProtocol.EMAIL, endpoint: props.alarmEmail });
       const alarm = new cw.Alarm(this, 'CertExpiry', {
         metric: cert.metricDaysToExpiry({ period: Duration.days(1) }),
         threshold: 30,

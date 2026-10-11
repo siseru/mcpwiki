@@ -26,10 +26,13 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - name: cdk synth (includes cdk-nag AwsSolutions checks)
-        run: npx cdk synth --quiet -c githubRepo=${GITHUB_REPOSITORY}
+        # A probe alarm address, so the next step can prove addresses never reach logical ids / paths.
+        run: npx cdk synth --quiet -c githubRepo=${GITHUB_REPOSITORY} -c alarmEmail=ci-probe+mcpwiki@example.invalid
         env:
           CDK_DEFAULT_ACCOUNT: '123456789012'
           CDK_DEFAULT_REGION: us-west-2
+      - name: Alarm e-mail stays out of logical ids (deploy logs are public)
+        run: node scripts/ci/check-email-exposure.mjs cdk.out ci-probe+mcpwiki@example.invalid
       - name: Audit runtime dependencies
         run: npm audit --omit=dev --audit-level=high
       - name: Verify registry signatures of installed packages

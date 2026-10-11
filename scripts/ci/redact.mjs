@@ -15,6 +15,8 @@ const add = (v) => {
 };
 add(process.env.AWS_ACCOUNT_ID);
 add(process.env.MCPWIKI_ALARM_EMAIL); // SNS subscription endpoint in the synthesized templates
+// ... and its punctuation-free form (old EmailSubscription logical ids, printed while they are deleted).
+add((process.env.MCPWIKI_ALARM_EMAIL ?? '').replace(/[^A-Za-z0-9]/g, ''));
 // Extra values / URLs (their host names are masked), comma-separated, e.g. REDACT_EXTRA=${{ vars.DEV_URL }}
 for (const item of (process.env.REDACT_EXTRA ?? '').split(',')) {
   try {

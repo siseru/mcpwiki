@@ -22,7 +22,6 @@ import {
   aws_s3_deployment as s3deploy,
   aws_secretsmanager as secrets,
   aws_sns as sns,
-  aws_sns_subscriptions as subs,
   aws_ssm as ssm,
 } from 'aws-cdk-lib';
 import type { Construct } from 'constructs';
@@ -476,7 +475,9 @@ export class WikiStack extends Stack {
 
     // ---------------------------------------------------------------- monitoring
     const topic = new sns.Topic(this, 'Alarms', { displayName: `MCPWiki ${envName} alarms`, enforceSSL: true });
-    if (props.alarmEmail) topic.addSubscription(new subs.EmailSubscription(props.alarmEmail));
+    // Fixed construct id: EmailSubscription derives the logical id from the address, which then shows up in
+    // public deploy logs (lint forbids it).
+    if (props.alarmEmail) new sns.Subscription(this, 'AlarmEmail', { topic, protocol: sns.SubscriptionProtocol.EMAIL, endpoint: props.alarmEmail });
     const alarm = (id: string, metric: cw.IMetric, threshold: number, desc: string) => {
       const a = new cw.Alarm(this, id, {
         metric,
