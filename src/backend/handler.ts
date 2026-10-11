@@ -1,6 +1,7 @@
 // AWS Lambda entry point (API Gateway HTTP API, payload format 2.0).
 import { createHash } from 'node:crypto';
 import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
+import { PublishCommand, SNSClient } from '@aws-sdk/client-sns';
 import { GetParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
 import { TokenVerifier, type Jwk } from './auth.js';
 import { createApp, type Req, type Res } from './app.js';
@@ -78,8 +79,12 @@ async function getApp() {
       return (await r.json()) as { keys: Jwk[] };
     },
   });
+  const topicArn = process.env.SECURITY_TOPIC_ARN;
+  const sns = topicArn ? new SNSClient({ region }) : undefined;
   const service = new WikiService(store, new CognitoUserDirectory(poolId, region), undefined, {
     cursorKey: createHash('sha256').update(`mcpwiki-cursor|${secret}`).digest(),
+    envName: process.env.MCPWIKI_ENV,
+    notify: sns ? async (Subject, Message) => void (await sns.send(new PublishCommand({ TopicArn: topicArn, Subject, Message }))) : undefined,
   });
   // Default help pages: created if missing, refreshed while still untouched (idempotent across concurrent cold starts).
   try {

@@ -1,6 +1,7 @@
 // HTTP routing for /api/*, /mcp and /.well-known/*. Transport-agnostic (see handler.ts).
 import { timingSafeEqual } from 'node:crypto';
 import type { Principal } from '../shared/types.js';
+import { REPOSITORY_URL } from '../shared/version.js';
 import { TokenVerifier } from './auth.js';
 import { badRequest, forbidden, HttpError, notFound } from './errors.js';
 import { handleMcpMessage } from './mcp.js';
@@ -24,6 +25,8 @@ export interface Res {
 }
 
 export interface AppDeps {
+  /** Source repository for security.txt (defaults to the build-time package.json value). */
+  repositoryUrl?: string;
   service: WikiService;
   attachments: AttachmentService;
   verifier: TokenVerifier;
@@ -91,6 +94,7 @@ export function createApp(d: AppDeps): (req: Req) => Promise<Res> {
   };
 
   const routes: Route[] = [
+    { method: 'POST', re: /^\/api\/me\/passkey$/, handler: async (p) => (webOnly(p), await svc.preparePasskey(p), json(200, { ok: true })) },
     { method: 'GET', re: /^\/api\/me$/, handler: async (p) => json(200, { username: p.username, role: p.role, via: p.via, site: await svc.getSettings() }) },
     {
       method: 'GET',
@@ -205,6 +209,23 @@ export function createApp(d: AppDeps): (req: Req) => Promise<Res> {
     { method: 'POST', re: /^\/api\/admin\/reindex$/, handler: async (p, r) => (webOnly(p), json(200, await svc.reindex(p, (parseJson(r) as { cursor?: string }).cursor))) },
   ];
 
+  /** RFC 9116: where to report vulnerabilities (the repository's private advisory form). */
+  function securityTxt(): Res {
+    const repo = d.repositoryUrl ?? REPOSITORY_URL;
+    if (!repo) throw notFound();
+    const expires = new Date(Date.now() + 180 * 86_400_000);
+    expires.setUTCHours(0, 0, 0, 0);
+    const body = [
+      `Contact: ${repo}/security/advisories/new`,
+      `Expires: ${expires.toISOString()}`,
+      `Policy: ${repo}/blob/main/SECURITY.md`,
+      'Preferred-Languages: ja, en',
+      `Canonical: ${d.publicUrl}/.well-known/security.txt`,
+      '',
+    ].join('\n');
+    return { status: 200, headers: { ...BASE_HEADERS, 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'public, max-age=86400' }, body };
+  }
+
   return async (req: Req): Promise<Res> => {
     const started = Date.now();
     let principal: Principal | undefined;
@@ -225,12 +246,15 @@ export function createApp(d: AppDeps): (req: Req) => Promise<Res> {
         user: principal?.username, via: principal?.via,
         // Set by the CloudFront viewer-request function (overwrites any client-supplied value).
         ip: req.headers['x-viewer-address']?.slice(0, 64),
+        // For matching published indicators (scanner / tool User-Agents); bounded, JSON-escaped.
+        ua: req.headers['user-agent']?.slice(0, 200),
       }),
     );
     return res;
 
     async function route(r: Req): Promise<Res> {
       if (r.path === '/api/health' && r.method === 'GET') return json(200, { ok: true });
+      if (r.path === '/.well-known/security.txt' && r.method === 'GET') return securityTxt();
       if (r.path.startsWith('/.well-known/oauth-protected-resource') && r.method === 'GET') {
         return json(200, {
           resource: `${d.publicUrl}/mcp`,

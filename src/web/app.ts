@@ -1,5 +1,5 @@
 // MCPWiki single-page app (user + admin screens).
-import type { ArticleSummary, Graph, HistoryEntry, ReadScope, SiteSettings, WriteScope } from '../shared/types.js';
+import type { ArticleSummary, Graph, HistoryEntry, PublicConfig, ReadScope, SiteSettings, WriteScope } from '../shared/types.js';
 import { READ_SCOPES, STATUSES, WRITE_SCOPES } from '../shared/types.js';
 import { isReadScopeWider, isWriteScopeWider, scopesValid } from '../shared/permissions.js';
 import { linkTargetToId } from '../shared/text.js';
@@ -18,6 +18,7 @@ interface Me {
 }
 
 let me: Me;
+let config: PublicConfig;
 const main = () => document.getElementById('main')!;
 
 const READ_LABEL: Record<ReadScope, string> = { admin: '管理者のみ', owner: 'オーナーのみ', all: 'だれでも' };
@@ -85,6 +86,7 @@ async function render() {
     else if ((m = /^\/tags\/(.+)$/.exec(path))) view = await tagView(m[1]!);
     else if (path === '/tags') view = await tagsView();
     else if (path === '/new') view = editorView(null);
+    else if (path === '/account') view = accountView();
     else if (path === '/graph') view = await graphView(undefined);
     else if ((m = /^\/wiki\/([a-z0-9-]+?)(?:\.md)?$/.exec(path))) view = await articleView(m[1]!, undefined);
     else if ((m = /^\/wiki\/([a-z0-9-]+)\/edit$/.exec(path))) view = await editView(m[1]!);
@@ -488,6 +490,53 @@ function editorView(a: any | null) {
     h('div', { class: 'actions' }, save, link(a ? `/wiki/${a.id}` : '/', h('span', { class: 'button secondary' }, 'キャンセル'))),
   );
   return h('div', null, h('h1', null, a ? `編集: ${a.title}` : '新しい記事'), form);
+}
+
+// ------------------------------------------------------------------ account
+
+/**
+ * Account page: sign-in methods. "Add a passkey" first lets the user's passkeys satisfy MFA (API), then hands
+ * over to the managed-login passkey page, which comes back here. Registration itself happens entirely between
+ * the browser and Cognito; MCPWiki never sees the key.
+ */
+function accountView() {
+  // Managed login may append parameters when it returns here; nothing in them is needed.
+  if (location.search) history.replaceState(null, '', '/account');
+  const msg = h('div', { role: 'status' });
+  const add = h('button', {
+    type: 'button',
+    onclick: async () => {
+      clear(msg);
+      add.disabled = true;
+      try {
+        await api('POST', '/api/me/passkey');
+        const u = new URL('/passkeys/add', config.cognitoDomain);
+        u.searchParams.set('client_id', config.webClientId);
+        u.searchParams.set('redirect_uri', `${location.origin}/account`);
+        location.assign(u.toString());
+      } catch (e) {
+        add.disabled = false;
+        msg.appendChild(errorBox(e));
+      }
+    },
+  }, 'パスキーを追加');
+  const li = (...c: (Node | string)[]) => h('li', null, ...c);
+  return h(
+    'div',
+    null,
+    h('h1', null, 'アカウント'),
+    h('p', null, `${me.username}（${me.role}）`),
+    h('h2', null, 'パスキー'),
+    h('p', null, 'パスキーは、Face ID・Touch ID・Windows Hello・端末のパスワードや PIN でサインインする方法です。偽のログイン画面では使えないので、認証アプリの 6 桁のコードより安全です。パスキーだけで多要素認証を満たします。'),
+    h('ul', null,
+      li('「パスキーを追加」を押すとログイン画面に移ります。サインインを求められたら、いつもの方法でサインインしてください。'),
+      li('端末ごとに追加できます（1 人 20 個まで）。iPhone と Mac のように同じ Apple ID の端末どうしは、iCloud キーチェーンで同期されます。'),
+      li('Touch ID のない Mac では Mac のログインパスワード、Windows では Windows Hello（PIN でも可）で確認します。パスキーのない端末では、ログイン画面の「別の端末を使う」で表示される QR コードをスマホで読み取ってもサインインできます。'),
+      li('パスワードと認証アプリ（TOTP）でのサインインも引き続き使えます。'),
+    ),
+    add,
+    msg,
+  );
 }
 
 // ------------------------------------------------------------------ admin
@@ -910,7 +959,7 @@ function header() {
     h(
       'nav',
       null,
-      h('span', { class: 'user' }, `${me.username} (${me.role})`),
+      link('/account', h('span', { class: 'user' }, `${me.username} (${me.role})`)),
       h('button', { class: 'secondary', onclick: () => void logout() }, 'ログアウト'),
     ),
   ]);
@@ -985,6 +1034,7 @@ function markActive() {
 
 async function boot() {
   const cfg = await loadConfig();
+  config = cfg;
   document.body.dataset.env = cfg.env;
   try {
     await handleCallback();

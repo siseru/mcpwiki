@@ -26,6 +26,20 @@ const MAX_SCAN = 5000;
 const MAX_ARCHIVE_ARTICLES = 50_000;
 const MAX_ARCHIVE_BYTES = 200 * 1024 * 1024;
 const SETTINGS_TTL_MS = 30_000;
+/** Sends a short human-readable alert (e.g. SNS -> e-mail). Failures are logged, never fatal. */
+export type SecurityNotifier = (subject: string, message: string) => Promise<void>;
+
+/**
+ * Audit actions an administrator should hear about right away: account and role changes, mass permission
+ * changes, bulk data access and wiki-wide settings. (The incidents in the 2026-10 JPCERT/CC advisories went
+ * unnoticed through unexpected accounts, re-enabled accounts and bulk data access.)
+ */
+export function isSecurityEvent(action: string, detail?: string): boolean {
+  // user.passkey: a new passkey is exactly how a stolen session would be turned into lasting access.
+  if (['user.invite', 'user.update', 'user.passkey', 'export-all', 'import', 'settings'].includes(action)) return true;
+  return action === 'bulk' && !!detail?.startsWith('scopes');
+}
+
 /** Articles per bulk request (the web UI sends batches; keeps one request well inside the Lambda timeout). */
 export const MAX_BULK_IDS = 100;
 const MAX_GRAPH_NODES = 300;
@@ -121,11 +135,16 @@ export class WikiService {
     private readonly store: Store,
     private readonly users: UserDirectory,
     private readonly now: () => Date = () => new Date(),
-    opts: { cursorKey?: Buffer } = {},
+    opts: { cursorKey?: Buffer; notify?: SecurityNotifier; envName?: string } = {},
   ) {
     // Must be shared by all Lambda instances (derived from a deployment secret); random is fine for tests.
     this.cursorKey = opts.cursorKey ?? randomBytes(32);
+    this.notify = opts.notify;
+    this.envName = opts.envName ?? 'local';
   }
+
+  private readonly notify?: SecurityNotifier;
+  private readonly envName: string;
 
   private ts(): string {
     return this.now().toISOString();
@@ -149,6 +168,28 @@ export class WikiService {
       await this.store.putAudit(e);
     } catch (err) {
       console.error(JSON.stringify({ msg: 'audit write failed', action, err: String(err) }));
+    }
+    // Also in the function log, so CloudWatch Logs Insights can search audit events next to requests.
+    console.log(JSON.stringify({ msg: 'audit', ...e }));
+    if (this.notify && isSecurityEvent(action, e.detail)) {
+      // SNS subjects: printable ASCII, < 100 characters.
+      const subject = `MCPWiki ${this.envName}: ${action} by ${p.username}`.replace(/[^\x20-\x7e]/g, '?').slice(0, 99);
+      const message = [
+        `MCPWiki (${this.envName}) security-relevant action`,
+        '',
+        `action:  ${action}`,
+        `actor:   ${p.username} (via ${p.via})`,
+        `time:    ${e.ts}`,
+        ...(e.articleId ? [`article: ${e.articleId}`] : []),
+        ...(e.detail ? [`detail:  ${e.detail}`] : []),
+        '',
+        'If you did not expect this, check Admin -> Audit log and the user list now.',
+      ].join('\n');
+      try {
+        await this.notify(subject, message);
+      } catch (err) {
+        console.error(JSON.stringify({ msg: 'security notification failed', action, err: String(err) }));
+      }
     }
   }
 
@@ -795,6 +836,16 @@ export class WikiService {
     const d = date ?? this.ts().slice(0, 10);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) throw badRequest('date must be YYYY-MM-DD');
     return this.store.listAudit(d, 500);
+  }
+
+  /**
+   * Before the user is sent to the managed-login "add a passkey" page: lets their passkeys satisfy MFA. Web UI
+   * only (a session that can only reach the API through the CLI / MCP must not add sign-in factors).
+   */
+  async preparePasskey(p: Principal): Promise<void> {
+    if (p.via !== 'web') throw forbidden('passkeys can only be added from the web UI');
+    await this.users.enablePasskeyMfa(p.username);
+    await this.audit(p, 'user.passkey', undefined, 'passkey MFA enabled; adding a passkey');
   }
 
   async listUsers(p: Principal): Promise<UserInfo[]> {

@@ -9,7 +9,7 @@ test('site title: admins change it from the web UI only, everyone sees it in /ap
   assert.equal((await call(users.vic, 'GET', '/api/me')).json.site.title, 'MCPWiki', 'default');
   assert.equal((await call(users.alice, 'PUT', '/api/admin/settings', { title: 'Team Wiki' })).status, 403);
   assert.equal((await call(users.admin, 'PUT', '/api/admin/settings', { title: 'Team Wiki' }, { client: CLI })).status, 403);
-  for (const bad of [{}, { title: '' }, { title: '   ' }, { title: 'x'.repeat(61) }, { title: 'a\nb' }, { title: 'a‮b' }, { title: 3 }, { title: 'ok', extra: 1 }]) {
+  for (const bad of [{}, { title: '' }, { title: '   ' }, { title: 'x'.repeat(61) }, { title: 'a\nb' }, { title: 'a\u202eb' }, { title: 3 }, { title: 'ok', extra: 1 }]) {
     assert.equal((await call(users.admin, 'PUT', '/api/admin/settings', bad)).status, 400, JSON.stringify(bad));
   }
   const r = await call(users.admin, 'PUT', '/api/admin/settings', { title: '  チーム Wiki  ' });

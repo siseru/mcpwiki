@@ -10,8 +10,8 @@
 
 ## 認証
 
-- Cognito User Pool で MFA を必須にしています（TOTP のみ）。招待制で、パスワードは 12 文字以上かつ 4 種類の文字をすべて含む必要があります。メールアドレスを変更しても、確認が済むまでは元のアドレスのまま保持します（`keepOriginal`）。ユーザ自身による属性の書き換えはできません。
-- Managed login と PKCE を使います（Web と CLI はどちらも public client）。許可している認証フローは `ALLOW_REFRESH_TOKEN_AUTH` だけで、SRP やパスワード API は使えません。アクセストークンの有効期限は 1 時間、リフレッシュトークンは Web で 12 時間、CLI で 7 日です。
+- Cognito User Pool で MFA を必須にしています。方法は TOTP と、パスキー（WebAuthn）です。パスキーはユーザ検証（生体認証や端末のパスワード・PIN）を必須にしていて、それだけで MFA を満たします（`MULTI_FACTOR_WITH_USER_VERIFICATION`）。リライングパーティ ID はログイン用のホスト（`auth.<host>`）なので、偽のドメインでは使えません（フィッシング耐性）。パスキーは、各ユーザが Web 画面の「アカウント」から追加します。追加すると、そのユーザのパスキー MFA を有効にして（`AdminSetUserMFAPreference`。TOTP はそのまま残ります）、managed login の登録画面に移ります。パスキーの追加は監査ログに記録し、通知します（盗んだセッションで攻撃者が自分のパスキーを足し、居座る手口への対策）。招待制で、パスワードは 12 文字以上かつ 4 種類の文字をすべて含む必要があります。メールアドレスを変更しても、確認が済むまでは元のアドレスのまま保持します（`keepOriginal`）。ユーザ自身による属性の書き換えはできません。
+- Managed login と PKCE を使います（Web と CLI はどちらも public client）。許可している認証フローは `ALLOW_USER_AUTH`（managed login で、パスキーを含むサインイン方法を選べるようにするために必要）と `ALLOW_REFRESH_TOKEN_AUTH` だけです。SRP や、パスワードを直接送る認証フローは使えません。`ALLOW_USER_AUTH` は、Cognito のサインイン API（`InitiateAuth`）をスクリプトから直接呼べるようにもします。その場合も MFA は必要で、発行されるトークンには `aws.cognito.signin.user.admin` スコープが付きます。MCPWiki の API は、このスコープを持つトークンを拒否します（managed login では要求しないスコープです）。アクセストークンの有効期限は 1 時間、リフレッシュトークンは Web で 12 時間、CLI で 7 日です。
 - アクセストークンは Lambda の中で検証します（`src/backend/auth.ts`）。検証するのは RS256 署名（JWKS）、`iss`、`token_use=access`、`exp` / `iat`、`client_id` の許可リストです。
 - ロール変更や無効化の際は、Cognito を操作する前と後の両方で `minIat = now + 1` を記録します。それより前に発行されたトークンは即座に拒否されます。
 - Web のトークンは `sessionStorage` に置きます（`localStorage` の使用は lint で禁止）。
@@ -62,7 +62,10 @@
 - API Gateway を直接呼ばれないよう、CloudFront が付ける秘密ヘッダを Lambda が検証します。秘密は Secrets Manager から実行時に取得するので、Lambda の設定には現れません。
 - Lambda の IAM は最小権限です。予約同時実行数（dev 20 / prod 100）を設定し、共有アカウントの同時実行枠を使い切られないようにしています。
 - TLS 1.2 以上、ACM の自動更新（DNS 検証）、証明書の期限アラーム、CAA（Amazon のみ）を設定しています。
-- ログ: Lambda の構造化ログ（実際のクライアント IP は CloudFront Function が付けるヘッダから記録し、トークンと本文は記録しません）、API と CloudFront と S3 のアクセスログ、WAF のログ（認証ヘッダと Cookie は伏せ字）、監査ログ（保持 400 日）。CloudTrail はアカウント既存のマルチリージョン証跡を使います。
+- 検知と通知: 次の操作は、その場で詳細をメールで通知します（SNS。通知先はシークレット `MCPWIKI_ALARM_EMAIL`）。ユーザの招待、ロールの変更と無効化・再有効化、権限の一括変更、全記事のダウンロード、インポート、サイト設定の変更。アプリを通さない Cognito のユーザ管理（コンソール、CLI、`scripts/create-admin.sh`）も、アカウントの CloudTrail と EventBridge で検知して通知します。エラーの急増（スキャンや総当たり）などのアラームも同じ宛先に届きます。2026 年 10 月の JPCERT/CC 等の注意喚起で、気付きにくい兆候として挙げられた「作った覚えのないアカウント」「無効にしたはずのアカウントの再有効化」「大量のデータ取得」に対応します。
+- 注意喚起が出たときの確認: `node scripts/ioc-check.mjs` で、公表された IP アドレスや User-Agent とリクエストログを照合し、4xx の多い送信元、探索されたパス、最近の重要な管理操作を一覧できます（手順は [docs/deploy.md](deploy.md#9-運用)）。
+- 脆弱性の報告先: `/.well-known/security.txt`（RFC 9116）で、GitHub の非公開の報告フォームを案内します。
+- ログ: Lambda の構造化ログ（実際のクライアント IP は CloudFront Function が付けるヘッダから、User-Agent は 200 文字までを記録します。トークンと本文は記録しません）、監査イベント、API と CloudFront と S3 のアクセスログ、WAF のログ（認証ヘッダと Cookie は伏せ字）、監査ログ（保持 400 日）。CloudTrail はアカウント既存のマルチリージョン証跡を使います。
 - prod: AWS Backup（毎日、35 日保持、ボールトロック）、PITR、削除保護、RETAIN。
 
 ## dev / prod の分離（共有アカウント）

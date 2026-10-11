@@ -229,7 +229,8 @@ Private リポジトリでは、Code scanning、Dependency Review、Secret scann
 | dev への反映 | `main` へのマージ（自動） |
 | prod への反映 | `v*` タグの push と、承認 2 回（手順 7） |
 | 依存の更新 | Dependabot の PR（公開から 7 日の待機、lockfile の審査、インフラ差分の確認つき）。[docs/security.md](security.md#依存ライブラリの侵害サプライチェーンへの対策) |
-| アラームの通知先 | シークレット `MCPWIKI_ALARM_EMAIL`（手元では `MCPWIKI_ALARM_EMAIL=... npm run deploy:prod`）。SNS の確認メールのリンクを押すまで届きません |
+| アラームの通知先 | シークレット `MCPWIKI_ALARM_EMAIL`（手元では `MCPWIKI_ALARM_EMAIL=... npm run deploy:prod`）。SNS の確認メールのリンクを押すまで届きません。アラームのほか、重要な管理操作（ユーザの招待・ロール変更・再有効化、権限の一括変更、全記事のダウンロード、インポート、サイト設定）と、アプリを通さない Cognito のユーザ管理が通知されます。CI のログと公開のサマリでは、この値はマスクと伏せ字になります |
+| 注意喚起が出たときの確認 | 公表された IP アドレスや User-Agent をリクエストログと照合します。IP はファイルに 1 行 1 件（`[.]` 表記や `#` のコメント可）で書けます。終了コードは、一致なしが 0、一致ありが 1 です。4xx の多い送信元、探索されたパス、最近の重要な管理操作も表示します。`node scripts/ioc-check.mjs --env prod --since 2026-09-01 --ips-file iocs.txt --ua sqlmap,python-requests` |
 | オリジン用シークレットのローテーション | スタック `MCPWiki-<env>` の `OriginSecret`（Secrets Manager）の値を更新して、再デプロイします。切り替えの間、短時間 403 が出ます |
 | コスト | 小規模なら dev は月数ドル、prod は WAF を含めて月 10〜20 ドル程度。すべてのリソースに `Project` / `Environment` / `Component` / `ManagedBy` タグを付けているので、Billing の「コスト配分タグ」で有効にすれば Cost Explorer で集計できます |
 | CI に含まれないスタック | `MCPWiki-guard` と `MCPWiki-ci` は、変更したら管理者が手元からデプロイします |

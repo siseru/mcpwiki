@@ -18,7 +18,7 @@ A lightweight, serverless wiki designed to be used by LLMs through MCP.
 | DNS / certificates | Route 53 + ACM (us-east-1) | One certificate covers `<host>` and `auth.<host>`. It is DNS-validated, so ACM renews it automatically. A CAA record restricts issuance to Amazon. |
 | Delivery | CloudFront + S3 (OAC) | TLS 1.2+, CSP, HSTS. Requests to `*.cloudfront.net` are redirected to the canonical host. |
 | Protection | AWS WAF (prod) | Per-IP rate limit, AWS managed rules, logging with credentials redacted |
-| Authentication | Cognito User Pool (Essentials, managed login) | TOTP MFA required, invitation only, groups `admin` / `editor` / `viewer` |
+| Authentication | Cognito User Pool (Essentials, managed login) | MFA required (TOTP or a passkey), invitation only, groups `admin` / `editor` / `viewer` |
 | API / MCP | API Gateway HTTP API + Lambda (Node.js 24, arm64) | One function serves both REST and MCP Streamable HTTP. JWTs are verified inside the Lambda. |
 | Data | DynamoDB (on-demand, PITR) | Metadata, search inverted index, links (graph), history, audit log, rate limits |
 | Content | S3 (versioning) | Each article is an OKF document at `articles/<id>.md`, and S3 object versions serve as the history. The Lambda has no permission to delete objects. |

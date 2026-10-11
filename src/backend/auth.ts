@@ -31,6 +31,7 @@ export interface AccessClaims {
   username: string;
   client_id: string;
   token_use: string;
+  scope?: string;
   iss: string;
   exp: number;
   iat: number;
@@ -97,6 +98,11 @@ export class TokenVerifier {
     if (typeof c.sub !== 'string' || typeof c.client_id !== 'string') throw unauthorized('malformed token');
     const clients = await this.o.clients();
     if (!Object.prototype.hasOwnProperty.call(clients, c.client_id)) throw unauthorized('token was issued to an unknown client');
+    // Only tokens from managed login (OAuth + PKCE) are accepted. Tokens minted by calling Cognito's sign-in API
+    // directly (InitiateAuth, enabled for passkeys) always carry this scope; managed login never requests it.
+    if (typeof c.scope === 'string' && c.scope.split(' ').includes('aws.cognito.signin.user.admin')) {
+      throw unauthorized('tokens from direct sign-in API calls are not accepted; sign in through the login page');
+    }
     return c;
   }
 

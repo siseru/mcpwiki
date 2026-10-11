@@ -18,7 +18,7 @@ LLM / MCP から使うことを前提にした、軽量なサーバーレス Wik
 | DNS / 証明書 | Route 53 + ACM (us-east-1) | `<host>` と `auth.<host>` を 1 枚の証明書でカバーします。DNS 検証なので自動で更新されます。CAA で発行元を Amazon に限定しています |
 | 配信 | CloudFront + S3 (OAC) | TLS 1.2 以上、CSP / HSTS などを付けます。`*.cloudfront.net` へのアクセスは正規のホストへリダイレクトします |
 | 防御 | AWS WAF (prod) | IP レート制限、AWS マネージドルール、ログ出力（認証ヘッダは伏せ字） |
-| 認証 | Cognito User Pool (Essentials, managed login) | TOTP MFA 必須、招待制、グループ `admin` / `editor` / `viewer` |
+| 認証 | Cognito User Pool (Essentials, managed login) | MFA 必須（TOTP、またはパスキー）、招待制、グループ `admin` / `editor` / `viewer` |
 | API / MCP | API Gateway HTTP API + Lambda (Node.js 24, arm64) | 1 つの関数で REST と MCP Streamable HTTP を処理します。JWT は Lambda 内で検証します |
 | データ | DynamoDB (on-demand, PITR) | メタデータ、検索の転置インデックス、リンク（グラフ）、履歴、監査ログ、レート制限 |
 | 本文 | S3 (versioning) | `articles/<id>.md` に OKF 文書を置き、S3 のバージョンが履歴を兼ねます。Lambda には削除権限を与えていません |
