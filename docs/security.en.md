@@ -183,13 +183,13 @@ The initial backfill found 12 packages published less than 7 days earlier. They 
 
 | Layer | Mechanism |
 |---|---|
-| Code | CodeQL (security-extended; only the two file↔HTTP rules that describe the CLI's intended behavior are excluded, with reasons, in `.github/codeql/codeql-config.yml`, and a single reviewed finding — starting a `.cmd` editor on Windows — is accepted by rule + file + finding fingerprint, with a reason, in the gate in `codeql.yml`. Reviewed findings are still printed as notices on every run, so a stale exception is visible); custom lint for XSS sinks, token storage, the dependency allowlist, no deletion via MCP/CLI, and no secrets in logs; security regression tests (`test/security.test.ts`) |
+| Code | CodeQL (security-extended; only the two file↔HTTP rules that describe the CLI's intended behavior are excluded, with reasons, in `.github/codeql/codeql-config.yml`, and a single reviewed finding — starting a `.cmd` editor on Windows — is accepted by rule + file + finding fingerprint, with a reason, in the gate in `codeql.yml`. Reviewed findings are still printed as notices on every run, so a stale exception is visible); custom lint for XSS sinks, token storage, the dependency allowlist, no deletion via MCP/CLI, no secrets in logs, no literal bidi control characters in code (Trojan Source), and no `EmailSubscription` (it builds ids from e-mail addresses); security regression tests (`test/security.test.ts`) |
 | Dependencies | `npm audit` (runtime), `npm audit signatures`, Dependency Review (PRs), Dependabot (npm and Actions) |
 | Secrets | gitleaks over the full history; GitHub secret scanning with push protection |
 | IaC | cdk-nag AwsSolutions (every acknowledgement has a reason); checkov on the synthesized templates (every skip in `.checkov.yaml` has a reason) |
 | Pipeline | zizmor; lint requiring SHA-pinned actions, explicit `permissions`, `id-token` only in deploy jobs, and no `pull_request_target`; OpenSSF Scorecard |
 | Runtime | Post-deploy smoke tests (headers, authentication, redirects); weekly OWASP ZAP baseline against dev; optional AI security review on PRs |
-| Public-repository hygiene | Logs, job summaries and artifacts of a public repository are readable by anyone. Environment-specific values (account id, hosted zone, host names, user pool ids and similar) are masked and redacted (`scripts/ci/mask.sh`, `scripts/ci/redact.mjs`). The synthesized assembly is encrypted and integrity-protected (encrypt-then-MAC) with an environment secret (`scripts/ci/seal.sh`). lint enforces both. |
+| Public-repository hygiene | Logs, job summaries and artifacts of a public repository are readable by anyone. Environment-specific values (account id, hosted zone, host names, user pool ids and similar) are masked and redacted (`scripts/ci/mask.sh`, `scripts/ci/redact.mjs`). The synthesized assembly is encrypted and integrity-protected (encrypt-then-MAC) with an environment secret (`scripts/ci/seal.sh`). lint enforces both. The alarm address (`MCPWIKI_ALARM_EMAIL`) is masked as written and with punctuation dropped, and public output has every e-mail address redacted. CI synthesizes with a probe address and checks that it appears nowhere but the subscription endpoint: not in logical ids, construct paths, the manifest or anywhere else (`scripts/ci/check-email-exposure.mjs`). |
 | Deployment | Build and synth run without credentials. Only the deploy job uses OIDC, with `--ignore-scripts`, no cache, and the pre-synthesized assembly. |
 
 ## 2026-10 security review: status
@@ -204,6 +204,10 @@ The initial backfill found 12 packages published less than 7 days earlier. They 
 | Medium | Search acted as an oracle for unreadable content | Fixed |
 | Medium | CI deploys dropped alarm subscriptions; logging gaps; plaintext secret in env; shared concurrency pool | Fixed |
 | Low | Revision scope, id collisions, boundary spoofing, revocation race, verify rights, MCP write limits, cursors, reindex, link classification, attribute writes, external images, backups, CAA and others | Fixed |
+| Medium | No way to notice signs of compromise such as unexpected accounts, re-enabled accounts or bulk data access (review after the October 2026 advisories by JPCERT/CC and others) | Fixed: notifications for security-relevant actions and for Cognito administration outside the app, User-Agent logging, `scripts/ioc-check.mjs`. None of the published IPs appeared in the logs since launch. |
+| Medium | TOTP was the only MFA method, which a look-alike login page can phish | Fixed: passkeys, with user verification required, satisfy MFA |
+| Medium | The alarm address appeared, with punctuation dropped, in a public dev deploy log. CDK's `EmailSubscription` builds the logical id from the address, and GitHub masks only the literal value. | Fixed: the run's logs were deleted, ids are fixed, lint and a CI check prevent a repeat, and the punctuation-free form is masked too. prod was not affected. |
+| Low | Test code contained literal bidi control characters | Fixed: replaced with escapes; lint rejects them |
 | Low (accepted) | Some WAF body rules stay in count mode | Article bodies legitimately contain HTML and code samples. Mitigated by sanitized rendering and the CSP. |
 
 ## Known limitations
@@ -211,3 +215,6 @@ The initial backfill found 12 packages published less than 7 days earlier. They 
 - Cognito Plus (threat protection) is not used, for cost reasons.
 - dev has no WAF, for cost reasons. Throttling, reserved concurrency and per-user rate limits partly make up for it.
 - Rotating the origin secret is manual: update the value, then redeploy. Expect a few 403s during the cutover.
+- Password + TOTP sign-in stays available for situations where a passkey can't be used. TOTP can be phished, so consider removing it once everyone uses passkeys.
+- MCPWiki can't list a user's registered passkeys: that needs a token with the `aws.cognito.signin.user.admin` scope, which the API rejects. Registering again on a device that already has a passkey makes the login page say "Passkey is not supported".
+- Detecting Cognito administration outside the app relies on the account's multi-region CloudTrail. It covers user-level administration only; user pool configuration changes, which CloudFormation deploys also make, are not reported.
