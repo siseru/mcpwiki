@@ -226,10 +226,41 @@ export function renderGraph(g: Graph, focus: string | undefined, navigate: (path
   };
 
   // ---- input: wheel zoom, drag to pan, pinch zoom, keyboard
+  // Safari (iOS, and macOS trackpads) reports pinches as non-standard gesture* events and zooms the whole
+  // page unless they are cancelled; touch-action alone does not stop it on iOS. While a gesture is active it
+  // is the only zoom source, so pointer pinch / ctrl+wheel from the same gesture are not applied twice.
+  let gesture: { scale: number } | undefined;
+  type GestureLike = Event & { scale: number; clientX: number; clientY: number };
+  root.addEventListener('gesturestart', (ev) => {
+    ev.preventDefault();
+    gesture = { scale: (ev as GestureLike).scale || 1 };
+  });
+  root.addEventListener('gesturechange', (ev) => {
+    ev.preventDefault();
+    const g = ev as GestureLike;
+    if (!gesture || !g.scale) return;
+    const p = toSvg(g.clientX, g.clientY);
+    zoomAt(g.scale / gesture.scale, p.x, p.y);
+    gesture.scale = g.scale;
+    moved = true;
+  });
+  root.addEventListener('gestureend', (ev) => {
+    ev.preventDefault();
+    gesture = undefined;
+  });
+  // Belt and braces for browsers that start a page zoom from a two-finger touch on the graph.
+  root.addEventListener(
+    'touchmove',
+    (ev) => {
+      if (ev.touches.length > 1) ev.preventDefault();
+    },
+    { passive: false },
+  );
   root.addEventListener(
     'wheel',
     (ev) => {
       ev.preventDefault();
+      if (gesture) return;
       const p = toSvg(ev.clientX, ev.clientY);
       zoomAt(Math.exp(-ev.deltaY * (ev.deltaMode === 1 ? 0.05 : 0.0015)), p.x, p.y);
     },
@@ -264,6 +295,7 @@ export function renderGraph(g: Graph, focus: string | undefined, navigate: (path
       schedule();
     } else if (pointers.size === 2 && pinch) {
       pointers.set(ev.pointerId, cur);
+      if (gesture) return; // Safari: the gesture* handler zooms
       const [a, b] = [...pointers.values()];
       const d = Math.hypot(a!.x - b!.x, a!.y - b!.y);
       const mid = toSvg((a!.x + b!.x) / 2, (a!.y + b!.y) / 2);
