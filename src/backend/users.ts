@@ -147,13 +147,29 @@ export class CognitoUserDirectory implements UserDirectory {
   }
 
   async enablePasskeyMfa(username: string): Promise<void> {
-    // Only the WebAuthn preference is sent, so the TOTP setting (the fallback factor) is left as it is.
+    // Cognito's rules, verified against a real user pool (2026-10):
+    // - passkey MFA needs a registered passkey ("does not have applicable WebAuthn credentials");
+    // - and another MFA method enabled IN THE SAME REQUEST ("requires enabling an additional MFA setting"):
+    //   TOTP enabled by an earlier call, even as preferred, does not count. In an MFA-required pool the TOTP a
+    //   user sets up at first sign-in is in use but not recorded as an enabled preference, so it is declared
+    //   here. PreferredMfa is left alone; password sign-in keeps asking for the TOTP code as before.
     try {
-      await this.c.send(new AdminSetUserMFAPreferenceCommand({ UserPoolId: this.poolId, Username: username, WebAuthnMfaSettings: { Enabled: true } }));
+      await this.c.send(
+        new AdminSetUserMFAPreferenceCommand({
+          UserPoolId: this.poolId,
+          Username: username,
+          SoftwareTokenMfaSettings: { Enabled: true },
+          WebAuthnMfaSettings: { Enabled: true },
+        }),
+      );
     } catch (e) {
-      // Cognito only accepts this once the user has registered a passkey (e.g. registration was cancelled).
-      if ((e as { name?: string }).name === 'InvalidParameterException' && /WebAuthn credentials/i.test(String((e as Error).message))) {
+      const name = (e as { name?: string }).name;
+      const message = String((e as Error).message);
+      if (name === 'InvalidParameterException' && /WebAuthn credentials/i.test(message)) {
         throw new HttpError(409, 'no_passkey', 'no passkey is registered for this account yet');
+      }
+      if (name === 'InvalidParameterException' && /software token/i.test(message)) {
+        throw new HttpError(409, 'totp_required', 'set up the authenticator app (TOTP) first; it stays the fallback for passkeys');
       }
       throw e;
     }

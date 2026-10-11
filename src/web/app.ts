@@ -524,20 +524,7 @@ function accountView() {
     msg.appendChild(h('div', { class: 'muted' }, 'パスキーの登録画面に移動しています…'));
     location.assign(passkeyPageUrl());
   } else if (step === 'register') {
-    msg.appendChild(h('div', { class: 'muted' }, 'パスキーを有効にしています…'));
-    api('POST', '/api/me/passkey').then(
-      () => {
-        clear(msg);
-        msg.appendChild(h('div', { class: 'notice' }, 'パスキーを登録しました。次回から、ログイン画面でパスキーを選んでサインインできます。'));
-      },
-      (e) => {
-        clear(msg);
-        if (e instanceof ApiError && e.status === 409) {
-          const why = result && result !== 'success' ? `（ログイン画面からの応答: ${result.slice(0, 40)}）` : '（キャンセルされた可能性があります）';
-          msg.appendChild(h('div', { class: 'notice' }, `パスキーは登録されませんでした${why}。もう一度「パスキーを追加」を押してください。`));
-        } else msg.appendChild(errorBox(e));
-      },
-    );
+    void enablePasskey(msg, result);
   }
   const add = h('button', {
     type: 'button',
@@ -547,6 +534,8 @@ function accountView() {
       void login(); // comes back to /account (the current page)
     },
   }, 'パスキーを追加');
+  // Recovery: the passkey was registered but enabling it failed (e.g. a network error on the way back).
+  const enableOnly = h('button', { type: 'button', class: 'secondary', onclick: () => void enablePasskey(msg, null) }, '登録済みのパスキーを有効にする');
   const li = (...c: (Node | string)[]) => h('li', null, ...c);
   return h(
     'div',
@@ -561,9 +550,28 @@ function accountView() {
       li('Touch ID のない Mac では Mac のログインパスワード、Windows では Windows Hello（PIN でも可）で確認します。パスキーのない端末では、ログイン画面の「別の端末を使う」で表示される QR コードをスマホで読み取ってもサインインできます。'),
       li('パスワードと認証アプリ（TOTP）でのサインインも引き続き使えます。'),
     ),
-    add,
+    h('div', { class: 'bulk-bar' }, add, enableOnly),
     msg,
   );
+}
+
+/** Step 3: lets the registered passkeys satisfy MFA, and reports the outcome in `msg`. */
+async function enablePasskey(msg: HTMLElement, result: string | null) {
+  clear(msg);
+  msg.appendChild(h('div', { class: 'muted' }, 'パスキーを有効にしています…'));
+  try {
+    await api('POST', '/api/me/passkey');
+    clear(msg);
+    msg.appendChild(h('div', { class: 'notice' }, 'パスキーを有効にしました。次回から、ログイン画面でパスキーを選んでサインインできます（パスワードと認証アプリのコードも引き続き使えます）。'));
+  } catch (e) {
+    clear(msg);
+    if (e instanceof ApiError && e.code === 'no_passkey') {
+      const why = result && result !== 'success' ? `（ログイン画面からの応答: ${result.slice(0, 40)}）` : '（キャンセルされた可能性があります）';
+      msg.appendChild(h('div', { class: 'notice' }, `パスキーが登録されていません${why}。「パスキーを追加」からやり直してください。`));
+    } else if (e instanceof ApiError && e.code === 'totp_required') {
+      msg.appendChild(h('div', { class: 'notice' }, 'パスキーを使うには、認証アプリ（TOTP）の設定が必要です。パスキーが使えないときの代わりになります。'));
+    } else msg.appendChild(errorBox(e));
+  }
 }
 
 // ------------------------------------------------------------------ admin

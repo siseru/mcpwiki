@@ -239,3 +239,26 @@ test('passkeys: only managed-login tokens are accepted; adding a passkey is web-
   const { isSecurityEvent } = await import('../src/backend/service.js');
   assert.ok(isSecurityEvent('user.passkey'), 'a new sign-in factor is reported');
 });
+
+test('passkey MFA is enabled together with TOTP in one Cognito request (Cognito rejects it otherwise)', async () => {
+  const { CognitoUserDirectory } = await import('../src/backend/users.js');
+  const { HttpError } = await import('../src/backend/errors.js');
+  const sent: any[] = [];
+  let fail: Error | undefined;
+  const dir = new CognitoUserDirectory('us-west-2_TEST', 'us-west-2');
+  (dir as any).c = { send: async (cmd: any) => { sent.push(cmd.input); if (fail) throw fail; return {}; } };
+  await dir.enablePasskeyMfa('taro');
+  // Verified against a real pool: WebAuthn alone fails with "requires enabling an additional MFA setting",
+  // even when TOTP was enabled by an earlier call.
+  assert.deepEqual(sent, [{ UserPoolId: 'us-west-2_TEST', Username: 'taro', SoftwareTokenMfaSettings: { Enabled: true }, WebAuthnMfaSettings: { Enabled: true } }]);
+  const cognitoError = (message: string) => Object.assign(new Error(message), { name: 'InvalidParameterException' });
+  for (const [message, code] of [
+    ['User does not have applicable WebAuthn credentials to enable WebAuthn MFA.', 'no_passkey'],
+    ['User has not verified software token mfa', 'totp_required'],
+  ] as const) {
+    fail = cognitoError(message);
+    await assert.rejects(dir.enablePasskeyMfa('taro'), (e: any) => e instanceof HttpError && e.status === 409 && e.code === code);
+  }
+  fail = cognitoError('WebAuthn MFA requires enabling an additional MFA setting.');
+  await assert.rejects(dir.enablePasskeyMfa('taro'), /additional MFA setting/, 'anything else stays a server error (and is logged)');
+});
