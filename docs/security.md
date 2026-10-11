@@ -10,8 +10,8 @@
 
 ## 認証
 
-- Cognito User Pool で MFA を必須にしています（TOTP のみ）。招待制で、パスワードは 12 文字以上かつ 4 種類の文字をすべて含む必要があります。メールアドレスを変更しても、確認が済むまでは元のアドレスのまま保持します（`keepOriginal`）。ユーザ自身による属性の書き換えはできません。
-- Managed login と PKCE を使います（Web と CLI はどちらも public client）。許可している認証フローは `ALLOW_REFRESH_TOKEN_AUTH` だけで、SRP やパスワード API は使えません。アクセストークンの有効期限は 1 時間、リフレッシュトークンは Web で 12 時間、CLI で 7 日です。
+- Cognito User Pool で MFA を必須にしています。方法は TOTP と、パスキー（WebAuthn）です。パスキーはユーザ検証（生体認証や端末のパスワード・PIN）を必須にしていて、それだけで MFA を満たします（`MULTI_FACTOR_WITH_USER_VERIFICATION`）。リライングパーティ ID はログイン用のホスト（`auth.<host>`）なので、偽のドメインでは使えません（フィッシング耐性）。パスキーは、各ユーザが Web 画面の「アカウント」から追加します。追加すると、そのユーザのパスキー MFA を有効にして（`AdminSetUserMFAPreference`。TOTP はそのまま残ります）、managed login の登録画面に移ります。パスキーの追加は監査ログに記録し、通知します（盗んだセッションで攻撃者が自分のパスキーを足し、居座る手口への対策）。招待制で、パスワードは 12 文字以上かつ 4 種類の文字をすべて含む必要があります。メールアドレスを変更しても、確認が済むまでは元のアドレスのまま保持します（`keepOriginal`）。ユーザ自身による属性の書き換えはできません。
+- Managed login と PKCE を使います（Web と CLI はどちらも public client）。許可している認証フローは `ALLOW_USER_AUTH`（managed login で、パスキーを含むサインイン方法を選べるようにするために必要）と `ALLOW_REFRESH_TOKEN_AUTH` だけです。SRP や、パスワードを直接送る認証フローは使えません。`ALLOW_USER_AUTH` は、Cognito のサインイン API（`InitiateAuth`）をスクリプトから直接呼べるようにもします。その場合も MFA は必要で、発行されるトークンには `aws.cognito.signin.user.admin` スコープが付きます。MCPWiki の API は、このスコープを持つトークンを拒否します（managed login では要求しないスコープです）。アクセストークンの有効期限は 1 時間、リフレッシュトークンは Web で 12 時間、CLI で 7 日です。
 - アクセストークンは Lambda の中で検証します（`src/backend/auth.ts`）。検証するのは RS256 署名（JWKS）、`iss`、`token_use=access`、`exp` / `iat`、`client_id` の許可リストです。
 - ロール変更や無効化の際は、Cognito を操作する前と後の両方で `minIat = now + 1` を記録します。それより前に発行されたトークンは即座に拒否されます。
 - Web のトークンは `sessionStorage` に置きます（`localStorage` の使用は lint で禁止）。

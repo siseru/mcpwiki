@@ -94,6 +94,7 @@ export function createApp(d: AppDeps): (req: Req) => Promise<Res> {
   };
 
   const routes: Route[] = [
+    { method: 'POST', re: /^\/api\/me\/passkey$/, handler: async (p) => (webOnly(p), await svc.preparePasskey(p), json(200, { ok: true })) },
     { method: 'GET', re: /^\/api\/me$/, handler: async (p) => json(200, { username: p.username, role: p.role, via: p.via, site: await svc.getSettings() }) },
     {
       method: 'GET',

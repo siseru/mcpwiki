@@ -35,7 +35,8 @@ export type SecurityNotifier = (subject: string, message: string) => Promise<voi
  * unnoticed through unexpected accounts, re-enabled accounts and bulk data access.)
  */
 export function isSecurityEvent(action: string, detail?: string): boolean {
-  if (['user.invite', 'user.update', 'export-all', 'import', 'settings'].includes(action)) return true;
+  // user.passkey: a new passkey is exactly how a stolen session would be turned into lasting access.
+  if (['user.invite', 'user.update', 'user.passkey', 'export-all', 'import', 'settings'].includes(action)) return true;
   return action === 'bulk' && !!detail?.startsWith('scopes');
 }
 
@@ -835,6 +836,16 @@ export class WikiService {
     const d = date ?? this.ts().slice(0, 10);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) throw badRequest('date must be YYYY-MM-DD');
     return this.store.listAudit(d, 500);
+  }
+
+  /**
+   * Before the user is sent to the managed-login "add a passkey" page: lets their passkeys satisfy MFA. Web UI
+   * only (a session that can only reach the API through the CLI / MCP must not add sign-in factors).
+   */
+  async preparePasskey(p: Principal): Promise<void> {
+    if (p.via !== 'web') throw forbidden('passkeys can only be added from the web UI');
+    await this.users.enablePasskeyMfa(p.username);
+    await this.audit(p, 'user.passkey', undefined, 'passkey MFA enabled; adding a passkey');
   }
 
   async listUsers(p: Principal): Promise<UserInfo[]> {

@@ -142,6 +142,8 @@ export class WikiStack extends Stack {
     }
 
     // ---------------------------------------------------------------- auth
+    const custom = props.domain;
+    const authHost = custom ? `auth.${custom.host}` : `mcpwiki-${envName}-${this.account}.auth.${this.region}.amazoncognito.com`;
     const userPool = new cognito.UserPool(this, 'Users', {
       userPoolName: `mcpwiki-${envName}`,
       selfSignUpEnabled: false,
@@ -151,6 +153,11 @@ export class WikiStack extends Stack {
       standardAttributes: { email: { required: true, mutable: true } },
       mfa: cognito.Mfa.REQUIRED,
       mfaSecondFactor: { otp: true, sms: false },
+      // Passkeys (WebAuthn), phishing-resistant: password + TOTP stays available. The relying party is the login
+      // host, fixed here because changing it later invalidates every registered passkey.
+      signInPolicy: { allowedFirstAuthFactors: { password: true, passkey: true } },
+      passkeyRelyingPartyId: authHost,
+      passkeyUserVerification: cognito.PasskeyUserVerification.REQUIRED,
       passwordPolicy: {
         minLength: 12,
         requireLowercase: true,
@@ -176,8 +183,9 @@ export class WikiStack extends Stack {
       (name, i) => new cognito.CfnUserPoolGroup(this, `Group-${name}`, { userPoolId: userPool.userPoolId, groupName: name, precedence: i + 1 }),
     );
     void groups;
-    const custom = props.domain;
-    const authHost = custom ? `auth.${custom.host}` : `mcpwiki-${envName}-${this.account}.auth.${this.region}.amazoncognito.com`;
+    // A passkey with user verification (Face ID, Touch ID, Windows Hello, device password / PIN) satisfies the
+    // required MFA by itself; users switch it on for themselves when they add a passkey (see /account).
+    (userPool.node.defaultChild as cognito.CfnUserPool).webAuthnFactorConfiguration = 'MULTI_FACTOR_WITH_USER_VERIFICATION';
     const cognitoUrl = `https://${authHost}`;
     const zone = custom ? route53.HostedZone.fromHostedZoneAttributes(this, 'Zone', { zoneName: custom.zoneName, hostedZoneId: custom.hostedZoneId }) : undefined;
 
@@ -247,6 +255,7 @@ export class WikiStack extends Stack {
           'cognito-idp:AdminAddUserToGroup', 'cognito-idp:AdminRemoveUserFromGroup', 'cognito-idp:AdminCreateUser',
           'cognito-idp:AdminDisableUser', 'cognito-idp:AdminEnableUser', 'cognito-idp:AdminGetUser',
           'cognito-idp:AdminUserGlobalSignOut', 'cognito-idp:ListUsers', 'cognito-idp:ListUsersInGroup',
+          'cognito-idp:AdminSetUserMFAPreference', // only to switch on passkey MFA for the signed-in user
         ],
         resources: [userPool.userPoolArn],
       }),
@@ -394,7 +403,8 @@ export class WikiStack extends Stack {
       userPoolClientName: 'web',
       generateSecret: false,
       writeAttributes: new cognito.ClientAttributes(), // users cannot self-modify attributes (e.g. e-mail alias)
-      oAuth: { flows: { authorizationCodeGrant: true }, scopes, callbackUrls: [`${publicUrl}/callback`], logoutUrls: [`${publicUrl}/`] },
+      // /account: where managed login returns after "add a passkey" (passkeys/add takes the same redirect list).
+      oAuth: { flows: { authorizationCodeGrant: true }, scopes, callbackUrls: [`${publicUrl}/callback`, `${publicUrl}/account`], logoutUrls: [`${publicUrl}/`] },
       supportedIdentityProviders: [cognito.UserPoolClientIdentityProvider.COGNITO],
       accessTokenValidity: Duration.minutes(60),
       idTokenValidity: Duration.minutes(60),
@@ -415,8 +425,11 @@ export class WikiStack extends Stack {
       preventUserExistenceErrors: true,
     });
     for (const [name, c] of [['web', webClient], ['cli', cliClient]] as const) {
-      // Managed login + PKCE only: no SRP/password APIs (their tokens carry aws.cognito.signin.user.admin).
-      (c.node.defaultChild as cognito.CfnUserPoolClient).explicitAuthFlows = ['ALLOW_REFRESH_TOKEN_AUTH'];
+      // Managed login + PKCE. ALLOW_USER_AUTH is what managed login needs for choice-based sign-in (passkeys); it
+      // also opens InitiateAuth(USER_AUTH) to scripts, but tokens from that API carry
+      // aws.cognito.signin.user.admin and the MCPWiki API rejects them (src/backend/auth.ts). No SRP / plain
+      // password flows.
+      (c.node.defaultChild as cognito.CfnUserPoolClient).explicitAuthFlows = ['ALLOW_USER_AUTH', 'ALLOW_REFRESH_TOKEN_AUTH'];
       c.node.addDependency(domain);
       new cognito.CfnManagedLoginBranding(this, `LoginBranding-${name}`, {
         userPoolId: userPool.userPoolId,

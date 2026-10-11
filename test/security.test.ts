@@ -214,3 +214,23 @@ test('/.well-known/security.txt (RFC 9116) is public and points at the private a
   assert.equal((await setup({ repositoryUrl: '' }).call(null, 'GET', '/.well-known/security.txt')).status, 404, 'no repository, no contact');
   assert.equal((await withRepo.call(null, 'GET', '/.well-known/other.txt')).status, 401, 'other well-known paths stay behind auth');
 });
+
+test('passkeys: only managed-login tokens are accepted; adding a passkey is web-only, audited and alerted', async () => {
+  const { app, dir, call } = setup();
+  const { makeToken, WEB } = await import('./helpers.js');
+  const req = (token: string) => app({ method: 'GET', path: '/api/me', query: {}, headers: { authorization: `Bearer ${token}` }, body: null });
+  const claims = { sub: users.alice.sub, username: 'alice', 'cognito:groups': ['editor'], client_id: WEB };
+  assert.equal((await req(makeToken({ ...claims, scope: 'openid email profile' }))).status, 200, 'managed login token');
+  const direct = await req(makeToken({ ...claims, scope: 'aws.cognito.signin.user.admin' }));
+  assert.equal(direct.status, 401, 'token from a direct InitiateAuth call');
+  assert.match(String(direct.body), /direct sign-in API/);
+
+  assert.equal((await call(users.alice, 'POST', '/api/me/passkey', undefined, { client: CLI })).status, 403);
+  assert.equal((dir as any).passkeyMfa.size, 0);
+  assert.equal((await call(users.alice, 'POST', '/api/me/passkey')).status, 200);
+  assert.ok((dir as any).passkeyMfa.has('alice'));
+  const audit = (await call(users.admin, 'GET', `/api/admin/audit?date=${new Date().toISOString().slice(0, 10)}`)).json.items;
+  assert.ok(audit.some((e: any) => e.action === 'user.passkey' && e.actor === 'alice'));
+  const { isSecurityEvent } = await import('../src/backend/service.js');
+  assert.ok(isSecurityEvent('user.passkey'), 'a new sign-in factor is reported');
+});

@@ -6,6 +6,7 @@ import {
   AdminEnableUserCommand,
   AdminGetUserCommand,
   AdminRemoveUserFromGroupCommand,
+  AdminSetUserMFAPreferenceCommand,
   AdminUserGlobalSignOutCommand,
   CognitoIdentityProviderClient,
   ListUsersCommand,
@@ -35,6 +36,8 @@ export interface UserDirectory {
   invite(username: string, email: string, role: Role): Promise<UserInfo>;
   setRole(username: string, role: Role): Promise<void>;
   setEnabled(username: string, enabled: boolean): Promise<void>;
+  /** Lets the user's passkeys satisfy MFA (TOTP stays as a fallback). */
+  enablePasskeyMfa(username: string): Promise<void>;
 }
 
 function attr(u: Pick<UserType, 'Attributes'>, name: string): string {
@@ -139,6 +142,11 @@ export class CognitoUserDirectory implements UserDirectory {
       await this.c.send(new AdminUserGlobalSignOutCommand({ UserPoolId: this.poolId, Username: username }));
     }
   }
+
+  async enablePasskeyMfa(username: string): Promise<void> {
+    // Only the WebAuthn preference is sent, so the TOTP setting (the fallback factor) is left as it is.
+    await this.c.send(new AdminSetUserMFAPreferenceCommand({ UserPoolId: this.poolId, Username: username, WebAuthnMfaSettings: { Enabled: true } }));
+  }
 }
 
 /** In-memory directory for tests. */
@@ -161,5 +169,9 @@ export class MemoryUserDirectory implements UserDirectory {
   }
   async setEnabled(username: string, enabled: boolean) {
     this.users.get(username)!.enabled = enabled;
+  }
+  passkeyMfa = new Set<string>();
+  async enablePasskeyMfa(username: string) {
+    this.passkeyMfa.add(username);
   }
 }

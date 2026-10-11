@@ -11,14 +11,19 @@ English | [日本語](security.md)
 ## Authentication
 
 - **Cognito user pool**
-  - MFA is mandatory and TOTP is the only method.
+  - MFA is mandatory. The methods are TOTP and passkeys (WebAuthn).
+  - Passkeys require user verification (biometrics, device password or PIN) and then satisfy MFA on their own (`MULTI_FACTOR_WITH_USER_VERIFICATION`).
+  - The relying party ID is the login host (`auth.<host>`), so a passkey can't be used on a look-alike domain (phishing resistance).
+  - Users add passkeys themselves under Account in the web UI. This turns on passkey MFA for that user (`AdminSetUserMFAPreference`; TOTP stays) and hands over to the managed-login registration page.
+  - Adding a passkey is audited and e-mailed, because it is how a stolen session would be turned into lasting access.
   - Sign-up is by invitation only.
   - Passwords need 12+ characters drawn from 4 character classes.
   - An e-mail change takes effect only after the new address is verified (`keepOriginal`).
   - Users cannot write their own attributes.
 - **Managed login with PKCE**
   - Both the web and CLI clients are public clients.
-  - The only enabled auth flow is `ALLOW_REFRESH_TOKEN_AUTH`; SRP and the password APIs are disabled.
+  - The enabled auth flows are `ALLOW_USER_AUTH` (needed for choice-based sign-in with passkeys in managed login) and `ALLOW_REFRESH_TOKEN_AUTH`. SRP and the plain password flows are disabled.
+  - `ALLOW_USER_AUTH` also lets scripts call Cognito's sign-in API (`InitiateAuth`) directly. That still needs MFA, and the resulting tokens carry the `aws.cognito.signin.user.admin` scope, which the MCPWiki API rejects; managed login never requests it.
   - Access tokens last 1 h. Refresh tokens last 12 h for the web client and 7 days for the CLI.
 - **Token verification** happens in the Lambda (`src/backend/auth.ts`). It checks:
   - the RS256 signature against the JWKS
