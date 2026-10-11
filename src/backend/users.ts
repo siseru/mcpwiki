@@ -152,7 +152,8 @@ export class CognitoUserDirectory implements UserDirectory {
     // - and another MFA method enabled IN THE SAME REQUEST ("requires enabling an additional MFA setting"):
     //   TOTP enabled by an earlier call, even as preferred, does not count. In an MFA-required pool the TOTP a
     //   user sets up at first sign-in is in use but not recorded as an enabled preference, so it is declared
-    //   here. PreferredMfa is left alone; password sign-in keeps asking for the TOTP code as before.
+    //   here. Omitting PreferredMfa clears an existing TOTP preference; verified harmless: password sign-in
+    //   still goes straight to the TOTP code, and passkey sign-in needs no second factor.
     try {
       await this.c.send(
         new AdminSetUserMFAPreferenceCommand({
