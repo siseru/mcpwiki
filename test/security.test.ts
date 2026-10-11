@@ -6,13 +6,70 @@ import { extractLinks, snippet, stripMarkdown } from '../src/shared/text.js';
 import { parseYaml, stringifyYaml } from '../src/shared/yaml.js';
 import type { JsonValue } from '../src/shared/types.js';
 
-test('markdown helpers are linear on adversarial input (ReDoS)', () => {
-  for (const evil of ['<'.repeat(250_000), '[\n'.repeat(120_000), '[a]('.repeat(60_000), '```\n'.repeat(60_000), '![x]('.repeat(50_000)]) {
-    const t0 = Date.now();
-    stripMarkdown(evil);
-    extractLinks(evil);
-    snippet(evil, 'a');
-    assert.ok(Date.now() - t0 < 1500, `took ${Date.now() - t0}ms on ${JSON.stringify(evil.slice(0, 6))}`);
+// ReDoS: judge how running time GROWS with the input, not wall-clock time. An absolute limit flakes on slow or
+// busy CI runners (a 1500 ms cap once failed at 1560 ms although everything is linear). Quadrupling the input
+// takes ~4x for linear code and ~16x for quadratic code, so the limit sits in between. Each size is the median
+// of several runs after a warm-up; inputs that stay under GROWTH_FLOOR_MS even at full size are fast whatever
+// their ratio (too short to measure reliably, and real super-linear behaviour at these sizes takes far longer).
+const GROWTH_LIMIT = 8;
+const GROWTH_FLOOR_MS = 20;
+
+function medianMs(fn: () => void, runs = 3): number {
+  fn(); // warm-up (JIT, regex compilation)
+  const times: number[] = [];
+  for (let i = 0; i < runs; i++) {
+    const t0 = performance.now();
+    fn();
+    times.push(performance.now() - t0);
+  }
+  return times.sort((a, b) => a - b)[Math.floor(runs / 2)]!;
+}
+
+/** Ratio of running time for n vs n/4 copies of `unit`, or null when even n is too fast to measure. */
+function growth(fn: (s: string) => unknown, unit: string, n: number): { ratio: number | null; small: number; large: number } {
+  const smallInput = unit.repeat(n / 4);
+  const largeInput = unit.repeat(n);
+  const small = medianMs(() => fn(smallInput));
+  const large = medianMs(() => fn(largeInput));
+  return { ratio: large < GROWTH_FLOOR_MS ? null : large / Math.max(small, 0.01), small, large };
+}
+
+test('growth measurement tells linear from quadratic (self-check)', () => {
+  // Local 32-bit accumulators: a shared counter that outgrows V8's small integers slows every later operation
+  // down and makes even the linear control look super-linear.
+  let sink = 0;
+  const linear = (s: string) => {
+    let acc = 0;
+    for (let i = 0; i < s.length; i++) acc = (acc + s.charCodeAt(i)) | 0;
+    sink ^= acc;
+  };
+  const quadratic = (s: string) => {
+    let acc = 0;
+    for (let i = 0; i < s.length; i++) for (let j = 0; j < i; j++) acc = (acc + (s.charCodeAt(j) & 1)) | 0;
+    sink ^= acc;
+  };
+  const lin = growth((s) => {
+    for (let k = 0; k < 40; k++) linear(s);
+  }, 'ab', 400_000);
+  const quad = growth(quadratic, 'ab', 4_000);
+  assert.ok(lin.ratio === null || lin.ratio < GROWTH_LIMIT, `linear misclassified: ${JSON.stringify(lin)}`);
+  assert.ok(quad.ratio !== null && quad.ratio >= GROWTH_LIMIT, `quadratic misclassified: ${JSON.stringify(quad)}`);
+  assert.ok(Number.isInteger(sink)); // keep the loops from being optimized away
+});
+
+test('markdown helpers are linear on adversarial input (ReDoS)', { timeout: 60_000 }, () => {
+  const helpers: Record<string, (s: string) => unknown> = {
+    stripMarkdown: (s) => stripMarkdown(s),
+    extractLinks: (s) => extractLinks(s),
+    snippet: (s) => snippet(s, 'a'),
+  };
+  const inputs: [string, number][] = [['<', 250_000], ['[\n', 120_000], ['[a](', 60_000], ['```\n', 60_000], ['![x](', 50_000]];
+  for (const [unit, n] of inputs) {
+    for (const [name, fn] of Object.entries(helpers)) {
+      const g = growth(fn, unit, n);
+      const at = `${name} on ${JSON.stringify(unit)} x ${n}: ${g.small.toFixed(1)} ms -> ${g.large.toFixed(1)} ms`;
+      assert.ok(g.ratio === null || g.ratio < GROWTH_LIMIT, `super-linear growth (x${g.ratio?.toFixed(1)} for 4x input), ${at}`);
+    }
   }
 });
 
