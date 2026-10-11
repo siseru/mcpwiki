@@ -307,7 +307,7 @@ export class WikiService {
     return [...counts.entries()].map(([tag, count]) => ({ tag, count })).sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
   }
 
-  async search(p: Principal, query: string, opts: { tag?: string; limit?: unknown } = {}): Promise<SearchResult[]> {
+  async search(p: Principal, query: string, opts: { tag?: string; mine?: boolean; limit?: unknown } = {}): Promise<SearchResult[]> {
     const q = (query ?? '').trim();
     if (!q) throw badRequest('query is required');
     if (q.length > 200) throw badRequest('query is too long');
@@ -333,7 +333,7 @@ export class WikiService {
       .slice(0, 2000)
       .map(([id]) => id);
     const readable = (await this.store.batchGetMeta(candidates)).filter(
-      (m) => !m.deleted && canRead(p, m) && (!tag || m.tags.some((t) => normalize(t) === tag)),
+      (m) => !m.deleted && canRead(p, m) && (!tag || m.tags.some((t) => normalize(t) === tag)) && (!opts.mine || m.owner === p.sub),
     );
     let metas = readable.filter((m) => scores.get(m.id)!.matched === tokens.length);
     if (!metas.length) metas = readable.filter((m) => scores.get(m.id)!.matched >= Math.max(1, Math.ceil(tokens.length / 2)));
@@ -344,6 +344,7 @@ export class WikiService {
       metas = items.filter(
         (m) =>
           (!tag || m.tags.some((t) => normalize(t) === tag)) &&
+          (!opts.mine || m.owner === p.sub) &&
           (normalize(m.title).includes(nq) || normalize(m.description).includes(nq) || m.tags.some((t) => normalize(t).includes(nq))),
       );
     }

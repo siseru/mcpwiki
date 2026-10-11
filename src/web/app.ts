@@ -107,15 +107,37 @@ async function render() {
 
 // ------------------------------------------------------------------ views
 
+/** "Only my articles" filter, kept in the URL (?mine=1) so it survives reloads and can be bookmarked. */
+const mineOnly = () => new URLSearchParams(location.search).get('mine') === '1';
+
+function mineToggle() {
+  if (me.role === 'viewer') return null; // viewers cannot own articles
+  const q = new URLSearchParams(location.search);
+  const box = h('input', {
+    type: 'checkbox',
+    checked: mineOnly(),
+    onchange: (ev: Event) => {
+      if ((ev.target as HTMLInputElement).checked) q.set('mine', '1');
+      else q.delete('mine');
+      const qs = q.toString();
+      navigate(`${location.pathname}${qs ? `?${qs}` : ''}`);
+    },
+  });
+  return h('label', { class: 'mine-toggle' }, box, ' 自分がオーナーの記事のみ');
+}
+
 async function homeView() {
-  const list = await api<{ items: ArticleSummary[]; cursor?: string }>('GET', '/api/articles?limit=50');
+  const mine = mineOnly();
+  const base = `/api/articles?limit=50${mine ? '&mine=1' : ''}`;
+  const list = await api<{ items: ArticleSummary[]; cursor?: string }>('GET', base);
   const ul = h('ul', { class: 'articles' }, ...list.items.map((a) => articleRow(a)));
-  const more = list.cursor ? moreButton(ul, list.cursor) : null;
+  const more = list.cursor ? moreButton(ul, list.cursor, base) : null;
   return h(
     'section',
     null,
-    h('h1', null, '最近更新された記事'),
-    list.items.length ? ul : h('p', { class: 'muted' }, 'まだ記事がありません。'),
+    h('h1', null, mine ? '自分の記事' : '最近更新された記事'),
+    mineToggle(),
+    list.items.length ? ul : h('p', { class: 'muted' }, mine ? 'あなたがオーナーの記事はまだありません。' : 'まだ記事がありません。'),
     more,
   );
 }
@@ -136,23 +158,41 @@ function moreButton(ul: HTMLElement, cursor: string, base = '/api/articles?limit
 
 async function searchView(q: string, tag: string) {
   const input = h('input', { type: 'search', name: 'q', value: q, placeholder: 'キーワード', 'aria-label': '検索語' });
-  const form = h('form', { class: 'searchform', onsubmit: (ev: Event) => (ev.preventDefault(), navigate(`/search?q=${encodeURIComponent(input.value)}`)) }, input, h('button', { type: 'submit' }, '検索'));
-  if (!q.trim()) return h('div', null, h('h1', null, '検索'), form);
-  const r = await api<{ items: (ArticleSummary & { snippet: string })[] }>('GET', `/api/search?q=${encodeURIComponent(q)}${tag ? `&tag=${encodeURIComponent(tag)}` : ''}`);
+  const mine = mineOnly();
+  const form = h(
+    'form',
+    { class: 'searchform', onsubmit: (ev: Event) => (ev.preventDefault(), navigate(`/search?q=${encodeURIComponent(input.value)}${mine ? '&mine=1' : ''}`)) },
+    input,
+    h('button', { type: 'submit' }, '検索'),
+  );
+  if (!q.trim()) return h('div', null, h('h1', null, '検索'), form, mineToggle());
+  const r = await api<{ items: (ArticleSummary & { snippet: string })[] }>(
+    'GET',
+    `/api/search?q=${encodeURIComponent(q)}${tag ? `&tag=${encodeURIComponent(tag)}` : ''}${mine ? '&mine=1' : ''}`,
+  );
   return h(
     'div',
     null,
     h('h1', null, `「${q}」の検索結果`),
     form,
+    mineToggle(),
     r.items.length ? h('ul', { class: 'articles' }, ...r.items.map((a) => articleRow(a, h('div', { class: 'snippet' }, a.snippet)))) : h('p', { class: 'muted' }, '見つかりませんでした。'),
   );
 }
 
 async function tagView(tag: string) {
-  const base = `/api/articles?limit=50&tag=${encodeURIComponent(tag)}`;
+  const mine = mineOnly();
+  const base = `/api/articles?limit=50&tag=${encodeURIComponent(tag)}${mine ? '&mine=1' : ''}`;
   const r = await api<{ items: ArticleSummary[]; cursor?: string }>('GET', base);
   const ul = h('ul', { class: 'articles' }, ...r.items.map((a) => articleRow(a)));
-  return h('div', null, h('h1', null, `タグ: ${tag}`), ul, r.cursor ? moreButton(ul, r.cursor, base) : null);
+  return h(
+    'div',
+    null,
+    h('h1', null, `タグ: ${tag}`),
+    mineToggle(),
+    r.items.length ? ul : h('p', { class: 'muted' }, '該当する記事はありません。'),
+    r.cursor ? moreButton(ul, r.cursor, base) : null,
+  );
 }
 
 async function tagsView() {
@@ -890,6 +930,7 @@ function sidebar() {
     h('nav', { class: 'side-section' }, h('ul', { class: 'side-list' },
       nav('/', 'トップ'),
       me.role !== 'viewer' ? nav('/new', '＋ 新規作成') : null,
+      me.role !== 'viewer' ? nav('/?mine=1', '自分の記事') : null,
       nav('/tags', 'タグ一覧'),
       nav('/graph', '全体グラフ'),
       me.role === 'admin' ? nav('/admin', '管理') : null,
@@ -932,7 +973,10 @@ function markActive() {
   const path = decodeURI(location.pathname);
   for (const a of document.querySelectorAll<HTMLAnchorElement>('#sidebar a')) {
     const href = a.getAttribute('href') ?? '';
-    const active = href === path || (href !== '/' && href.startsWith('/admin') && path.startsWith('/admin'));
+    // Links with a query (e.g. "/?mine=1") match path + query; plain links must not light up for a filtered view.
+    const active = href.includes('?')
+      ? href === path + location.search
+      : (href === path && !(href === '/' && mineOnly())) || (href.startsWith('/admin') && path.startsWith('/admin'));
     a.classList.toggle('active', active);
     if (active) a.setAttribute('aria-current', 'page');
     else a.removeAttribute('aria-current');
