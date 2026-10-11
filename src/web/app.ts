@@ -494,19 +494,36 @@ function editorView(a: any | null) {
 
 // ------------------------------------------------------------------ account
 
-const PASSKEY_PENDING = 'mcpwiki.passkeyPending';
+const PASSKEY_STEP = 'mcpwiki.passkeyStep';
+
+function passkeyPageUrl(): string {
+  const u = new URL('/passkeys/add', config.cognitoDomain);
+  u.searchParams.set('client_id', config.webClientId);
+  u.searchParams.set('redirect_uri', `${location.origin}/account`);
+  return u.toString();
+}
 
 /**
- * Account page: sign-in methods. "Add a passkey" hands over to the managed-login passkey page, which comes back
- * here; only then (Cognito refuses it before a passkey exists) the API lets the user's passkeys satisfy MFA.
+ * Account page: sign-in methods. Adding a passkey takes three steps, tracked per tab in sessionStorage:
+ * 1. "signin": a fresh managed-login sign-in (silent while Cognito's own session is still valid). The passkey
+ *    page needs that session; the app's tokens alone are not enough (it bounces back with
+ *    result=invalid_session).
+ * 2. "register": managed login's /passkeys/add, which comes back here.
+ * 3. The API lets the user's passkeys satisfy MFA (Cognito refuses this before a passkey exists).
  * Registration itself happens entirely between the browser and Cognito; MCPWiki never sees the key.
  */
 function accountView() {
-  // Managed login may append parameters when it returns here; nothing in them is needed.
+  // Managed login reports the outcome as ?result=...; read it, then clean the URL.
+  const result = new URLSearchParams(location.search).get('result');
   if (location.search) history.replaceState(null, '', '/account');
   const msg = h('div', { role: 'status' });
-  if (sessionStorage.getItem(PASSKEY_PENDING)) {
-    sessionStorage.removeItem(PASSKEY_PENDING);
+  const step = sessionStorage.getItem(PASSKEY_STEP);
+  sessionStorage.removeItem(PASSKEY_STEP);
+  if (step === 'signin') {
+    sessionStorage.setItem(PASSKEY_STEP, 'register');
+    msg.appendChild(h('div', { class: 'muted' }, 'パスキーの登録画面に移動しています…'));
+    location.assign(passkeyPageUrl());
+  } else if (step === 'register') {
     msg.appendChild(h('div', { class: 'muted' }, 'パスキーを有効にしています…'));
     api('POST', '/api/me/passkey').then(
       () => {
@@ -515,8 +532,10 @@ function accountView() {
       },
       (e) => {
         clear(msg);
-        if (e instanceof ApiError && e.status === 409) msg.appendChild(h('div', { class: 'notice' }, 'パスキーは登録されませんでした（キャンセルされた可能性があります）。もう一度「パスキーを追加」を押してください。'));
-        else msg.appendChild(errorBox(e));
+        if (e instanceof ApiError && e.status === 409) {
+          const why = result && result !== 'success' ? `（ログイン画面からの応答: ${result.slice(0, 40)}）` : '（キャンセルされた可能性があります）';
+          msg.appendChild(h('div', { class: 'notice' }, `パスキーは登録されませんでした${why}。もう一度「パスキーを追加」を押してください。`));
+        } else msg.appendChild(errorBox(e));
       },
     );
   }
@@ -524,11 +543,8 @@ function accountView() {
     type: 'button',
     onclick: () => {
       clear(msg);
-      sessionStorage.setItem(PASSKEY_PENDING, '1');
-      const u = new URL('/passkeys/add', config.cognitoDomain);
-      u.searchParams.set('client_id', config.webClientId);
-      u.searchParams.set('redirect_uri', `${location.origin}/account`);
-      location.assign(u.toString());
+      sessionStorage.setItem(PASSKEY_STEP, 'signin');
+      void login(); // comes back to /account (the current page)
     },
   }, 'パスキーを追加');
   const li = (...c: (Node | string)[]) => h('li', null, ...c);
