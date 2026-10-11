@@ -3,9 +3,9 @@
 // as "not found" so their existence is not revealed.
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import type {
-  Article, ArticleMeta, ArticleSummary, AuditEntry, Graph, GraphEdge, HistoryEntry, Principal, Role, SiteSettings,
+  Article, ArticleMeta, ArticleSummary, AuditEntry, BulkResult, Graph, GraphEdge, HistoryEntry, Principal, ReadScope, Role, SiteSettings, WriteScope,
 } from '../shared/types.js';
-import { DEFAULT_SITE_TITLE, ROLES } from '../shared/types.js';
+import { DEFAULT_SITE_TITLE, READ_SCOPES, ROLES, WRITE_SCOPES } from '../shared/types.js';
 import {
   canChangePermissions, canCreate, canDelete, canRead, canWrite, isAdmin, isReadScopeWider, isWriteScopeWider, scopesValid,
 } from '../shared/permissions.js';
@@ -26,6 +26,8 @@ const MAX_SCAN = 5000;
 const MAX_ARCHIVE_ARTICLES = 50_000;
 const MAX_ARCHIVE_BYTES = 200 * 1024 * 1024;
 const SETTINGS_TTL_MS = 30_000;
+/** Articles per bulk request (the web UI sends batches; keeps one request well inside the Lambda timeout). */
+export const MAX_BULK_IDS = 100;
 const MAX_GRAPH_NODES = 300;
 const MAX_EXPORT_BYTES = 5 * 1024 * 1024;
 
@@ -133,7 +135,7 @@ export class WikiService {
     const s: ArticleSummary = {
       id: m.id, type: m.type, title: m.title, description: m.description, tags: m.tags, status: m.status,
       readScope: m.readScope, writeScope: m.writeScope, ownerName: m.ownerName, version: m.version,
-      updatedAt: m.updatedAt, updatedBy: m.updatedBy, canEdit: canWrite(p, m),
+      updatedAt: m.updatedAt, updatedBy: m.updatedBy, canEdit: canWrite(p, m), verified: m.verified.length > 0,
     };
     if (m.deleted) s.deleted = true;
     return s;
@@ -601,6 +603,57 @@ export class WikiService {
     return this.mutate(p, cur, 'verify', (m) => {
       m.verified = [...cur.verified.filter((v) => v.by !== `human:${p.username}`), { by: `human:${p.username}`, at: m.updatedAt }];
     });
+  }
+
+  // ------------------------------------------------------------- admin bulk actions
+
+  /**
+   * Marks several articles as reviewed, or sets their read / write scopes (widening included), from the web UI.
+   * Each article goes through verify() / update(), so every per-article rule, history entry and audit record
+   * still applies; one article failing does not stop the others.
+   */
+  async bulk(p: Principal, raw: unknown): Promise<{ results: BulkResult[] }> {
+    if (!isAdmin(p) || p.via !== 'web') throw forbidden('only admins can run bulk actions from the web UI');
+    const input = (raw ?? {}) as { action?: unknown; ids?: unknown; readScope?: unknown; writeScope?: unknown };
+    if (input.action !== 'verify' && input.action !== 'permissions') throw badRequest('action must be "verify" or "permissions"');
+    const ids = input.ids;
+    if (!Array.isArray(ids) || !ids.length || ids.length > MAX_BULK_IDS) throw badRequest(`ids must be a list of 1 to ${MAX_BULK_IDS} article ids`);
+    if (!ids.every((id) => typeof id === 'string' && ID_RE.test(id))) throw badRequest('invalid article id');
+    if (new Set(ids).size !== ids.length) throw badRequest('duplicate article id');
+    let readScope: ReadScope | undefined;
+    let writeScope: WriteScope | undefined;
+    if (input.action === 'permissions') {
+      if (input.readScope !== undefined && !(READ_SCOPES as readonly unknown[]).includes(input.readScope)) throw badRequest('invalid readScope');
+      if (input.writeScope !== undefined && !(WRITE_SCOPES as readonly unknown[]).includes(input.writeScope)) throw badRequest('invalid writeScope');
+      readScope = input.readScope as ReadScope | undefined;
+      writeScope = input.writeScope as WriteScope | undefined;
+      if (!readScope && !writeScope) throw badRequest('readScope or writeScope is required');
+    } else if (input.readScope !== undefined || input.writeScope !== undefined) {
+      throw badRequest('scopes are only allowed with action "permissions"');
+    }
+    const results = await mapLimit(ids as string[], 4, async (id): Promise<BulkResult> => {
+      try {
+        const cur = await this.readable(p, id);
+        if (cur.deleted) throw notFound();
+        if (input.action === 'verify') {
+          if (cur.verified.some((v) => v.by === `human:${p.username}`)) return { id, outcome: 'unchanged', version: cur.version };
+          return { id, outcome: 'changed', version: (await this.verify(p, id)).version };
+        }
+        const next = { readScope: readScope ?? cur.readScope, writeScope: writeScope ?? cur.writeScope };
+        if (next.readScope === cur.readScope && next.writeScope === cur.writeScope) return { id, outcome: 'unchanged', version: cur.version };
+        if (!scopesValid(next.readScope, next.writeScope)) {
+          throw badRequest(`edit scope (${next.writeScope}) would be wider than read scope (${next.readScope})`);
+        }
+        return { id, outcome: 'changed', version: (await this.update(p, id, cur.version, next)).version };
+      } catch (e) {
+        if (e instanceof HttpError) return { id, outcome: 'failed', error: { code: e.code, message: e.message } };
+        throw e;
+      }
+    });
+    const n = (o: BulkResult['outcome']) => results.filter((r) => r.outcome === o).length;
+    const what = input.action === 'verify' ? 'verify' : `scopes ${readScope ?? '-'}/${writeScope ?? '-'}`;
+    await this.audit(p, 'bulk', undefined, `${what}: ${n('changed')} changed, ${n('unchanged')} unchanged, ${n('failed')} failed`);
+    return { results };
   }
 
   // ------------------------------------------------------------- site settings

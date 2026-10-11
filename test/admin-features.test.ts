@@ -50,3 +50,56 @@ test('admin export: every live article (any scope) as an OKF zip in exports/, vi
   const audit = (await call(users.admin, 'GET', `/api/admin/audit?date=${new Date().toISOString().slice(0, 10)}`)).json.items;
   assert.ok(audit.some((e: any) => e.action === 'export-all' && e.detail === '3 articles'));
 });
+
+test('admin bulk: verify and set scopes (widening included) for many articles, web UI only', async () => {
+  const { call } = setup();
+  await call(users.alice, 'POST', '/api/articles', { id: 'b1', title: 'B1', body: 'x', readScope: 'owner', writeScope: 'owner' });
+  await call(users.alice, 'POST', '/api/articles', { id: 'b2', title: 'B2', body: 'x', readScope: 'admin', writeScope: 'none' });
+  await call(users.bob, 'POST', '/api/articles', { id: 'b3', title: 'B3', body: 'x' });
+  await call(users.bob, 'POST', '/api/articles', { id: 'gone', title: 'Gone', body: 'x' });
+  await call(users.admin, 'DELETE', '/api/articles/gone');
+  const bulk = (body: unknown, o = {}) => call(users.admin, 'POST', '/api/admin/articles/bulk', body, o);
+
+  // who / where
+  assert.equal((await call(users.alice, 'POST', '/api/admin/articles/bulk', { action: 'verify', ids: ['b1'] })).status, 403);
+  assert.equal((await bulk({ action: 'verify', ids: ['b1'] }, { client: CLI })).status, 403);
+  // input validation
+  for (const bad of [{}, { action: 'delete', ids: ['b1'] }, { action: 'verify', ids: [] }, { action: 'verify', ids: ['B 1'] }, { action: 'verify', ids: ['b1', 'b1'] },
+    { action: 'verify', ids: Array.from({ length: 101 }, (_, i) => `x${i}`) }, { action: 'permissions', ids: ['b1'] }, { action: 'permissions', ids: ['b1'], readScope: 'world' },
+    { action: 'verify', ids: ['b1'], readScope: 'all' }]) {
+    assert.equal((await bulk(bad)).status, 400, JSON.stringify(bad).slice(0, 80));
+  }
+
+  // verify: changed, then unchanged on a second run; missing / deleted articles fail individually
+  let r = await bulk({ action: 'verify', ids: ['b1', 'b2', 'b3', 'gone', 'nope'] });
+  assert.equal(r.status, 200);
+  assert.deepEqual(r.json.results.map((x: any) => [x.id, x.outcome]), [['b1', 'changed'], ['b2', 'changed'], ['b3', 'changed'], ['gone', 'failed'], ['nope', 'failed']]);
+  assert.equal((await call(users.admin, 'GET', '/api/articles/b1')).json.verified.length, 1);
+  assert.equal((await call(users.admin, 'GET', '/api/admin/articles?limit=10')).json.items.find((a: any) => a.id === 'b2').verified, true);
+  r = await bulk({ action: 'verify', ids: ['b1', 'b3'] });
+  assert.deepEqual(r.json.results.map((x: any) => x.outcome), ['unchanged', 'unchanged']);
+
+  // permissions: widen to everyone/everyone (b3 had the default owner-only edit scope); a second run is a no-op
+  r = await bulk({ action: 'permissions', ids: ['b1', 'b2', 'b3'], readScope: 'all', writeScope: 'all' });
+  assert.deepEqual(r.json.results.map((x: any) => [x.id, x.outcome]), [['b1', 'changed'], ['b2', 'changed'], ['b3', 'changed']]);
+  r = await bulk({ action: 'permissions', ids: ['b1', 'b2', 'b3'], readScope: 'all', writeScope: 'all' });
+  assert.deepEqual(r.json.results.map((x: any) => x.outcome), ['unchanged', 'unchanged', 'unchanged']);
+  assert.equal((await call(users.bob, 'GET', '/api/articles/b1')).status, 200, 'bob can now read alice\'s owner-only article');
+  assert.equal((await call(users.bob, 'PUT', '/api/articles/b2', { version: (await call(users.bob, 'GET', '/api/articles/b2')).json.version, body: 'edited' })).status, 200);
+  // scope changes keep the review (content unchanged)
+  assert.equal((await call(users.admin, 'GET', '/api/articles/b1')).json.verified.length, 1);
+
+  // only one side: narrowing read below the current write fails per article, the rest still apply
+  r = await bulk({ action: 'permissions', ids: ['b1', 'b3'], readScope: 'admin' });
+  assert.deepEqual(r.json.results.map((x: any) => x.outcome), ['failed', 'failed']);
+  assert.match(r.json.results[0].error.message, /wider than read scope/);
+  r = await bulk({ action: 'permissions', ids: ['b1', 'b3'], writeScope: 'none' });
+  assert.deepEqual(r.json.results.map((x: any) => x.outcome), ['changed', 'changed']);
+  r = await bulk({ action: 'permissions', ids: ['b1', 'b3'], readScope: 'admin' });
+  assert.deepEqual(r.json.results.map((x: any) => x.outcome), ['changed', 'changed']);
+  assert.equal((await call(users.bob, 'GET', '/api/articles/b3')).status, 404, 'bob lost access to his own article (admin-only now)');
+
+  const audit = (await call(users.admin, 'GET', `/api/admin/audit?date=${new Date().toISOString().slice(0, 10)}`)).json.items;
+  assert.ok(audit.some((e: any) => e.action === 'bulk' && /^verify: 3 changed, 0 unchanged, 2 failed$/.test(e.detail)));
+  assert.ok(audit.filter((e: any) => e.action === 'verify').length >= 3, 'each article is audited individually too');
+});
