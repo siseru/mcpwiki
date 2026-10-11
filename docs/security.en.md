@@ -14,7 +14,7 @@ English | [日本語](security.md)
   - MFA is mandatory. The methods are TOTP and passkeys (WebAuthn).
   - Passkeys require user verification (biometrics, device password or PIN) and then satisfy MFA on their own (`MULTI_FACTOR_WITH_USER_VERIFICATION`).
   - The relying party ID is the login host (`auth.<host>`), so a passkey can't be used on a look-alike domain (phishing resistance).
-  - Users add passkeys themselves under Account in the web UI. This turns on passkey MFA for that user (`AdminSetUserMFAPreference`; TOTP stays) and hands over to the managed-login registration page.
+  - Users add passkeys themselves under Account in the web UI: they register on the managed-login page, and when they come back the app turns on passkey MFA for them (`AdminSetUserMFAPreference`; Cognito refuses it before a passkey exists; TOTP stays).
   - Adding a passkey is audited and e-mailed, because it is how a stolen session would be turned into lasting access.
   - Sign-up is by invitation only.
   - Passwords need 12+ characters drawn from 4 character classes.

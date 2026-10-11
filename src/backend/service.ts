@@ -839,13 +839,13 @@ export class WikiService {
   }
 
   /**
-   * Before the user is sent to the managed-login "add a passkey" page: lets their passkeys satisfy MFA. Web UI
-   * only (a session that can only reach the API through the CLI / MCP must not add sign-in factors).
+   * After the user registered a passkey on the managed-login page: lets their passkeys satisfy MFA. Web UI only
+   * (a session that can only reach the API through the CLI / MCP must not add sign-in factors).
    */
-  async preparePasskey(p: Principal): Promise<void> {
+  async enablePasskey(p: Principal): Promise<void> {
     if (p.via !== 'web') throw forbidden('passkeys can only be added from the web UI');
     await this.users.enablePasskeyMfa(p.username);
-    await this.audit(p, 'user.passkey', undefined, 'passkey MFA enabled; adding a passkey');
+    await this.audit(p, 'user.passkey', undefined, 'passkey registered; passkey MFA enabled');
   }
 
   async listUsers(p: Principal): Promise<UserInfo[]> {

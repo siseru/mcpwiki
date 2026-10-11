@@ -17,7 +17,7 @@ import {
 } from '@aws-sdk/client-cognito-identity-provider';
 import type { Role } from '../shared/types.js';
 import { ROLES } from '../shared/types.js';
-import { ConflictError } from './errors.js';
+import { ConflictError, HttpError } from './errors.js';
 
 export interface UserInfo {
   username: string;
@@ -36,7 +36,10 @@ export interface UserDirectory {
   invite(username: string, email: string, role: Role): Promise<UserInfo>;
   setRole(username: string, role: Role): Promise<void>;
   setEnabled(username: string, enabled: boolean): Promise<void>;
-  /** Lets the user's passkeys satisfy MFA (TOTP stays as a fallback). */
+  /**
+   * Lets the user's passkeys satisfy MFA (TOTP stays as a fallback). Only possible after the user registered a
+   * passkey; otherwise HttpError 409 no_passkey.
+   */
   enablePasskeyMfa(username: string): Promise<void>;
 }
 
@@ -145,7 +148,15 @@ export class CognitoUserDirectory implements UserDirectory {
 
   async enablePasskeyMfa(username: string): Promise<void> {
     // Only the WebAuthn preference is sent, so the TOTP setting (the fallback factor) is left as it is.
-    await this.c.send(new AdminSetUserMFAPreferenceCommand({ UserPoolId: this.poolId, Username: username, WebAuthnMfaSettings: { Enabled: true } }));
+    try {
+      await this.c.send(new AdminSetUserMFAPreferenceCommand({ UserPoolId: this.poolId, Username: username, WebAuthnMfaSettings: { Enabled: true } }));
+    } catch (e) {
+      // Cognito only accepts this once the user has registered a passkey (e.g. registration was cancelled).
+      if ((e as { name?: string }).name === 'InvalidParameterException' && /WebAuthn credentials/i.test(String((e as Error).message))) {
+        throw new HttpError(409, 'no_passkey', 'no passkey is registered for this account yet');
+      }
+      throw e;
+    }
   }
 }
 
@@ -171,7 +182,10 @@ export class MemoryUserDirectory implements UserDirectory {
     this.users.get(username)!.enabled = enabled;
   }
   passkeyMfa = new Set<string>();
+  /** Users that have registered a passkey (Cognito refuses passkey MFA before that). */
+  passkeys = new Set<string>();
   async enablePasskeyMfa(username: string) {
+    if (!this.passkeys.has(username)) throw new HttpError(409, 'no_passkey', 'no passkey is registered for this account yet');
     this.passkeyMfa.add(username);
   }
 }
