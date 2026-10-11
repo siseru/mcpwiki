@@ -226,16 +226,19 @@ export function renderGraph(g: Graph, focus: string | undefined, navigate: (path
   };
 
   // ---- input: wheel zoom, drag to pan, pinch zoom, keyboard
+  // Touch / gesture handling lives on an HTML wrapper: WebKit ignores touch-action on SVG elements, so on iOS a
+  // pinch over the <svg> zoomed the whole page.
+  const canvas = h('div', { class: 'graph-canvas' }, root);
   // Safari (iOS, and macOS trackpads) reports pinches as non-standard gesture* events and zooms the whole
-  // page unless they are cancelled; touch-action alone does not stop it on iOS. While a gesture is active it
-  // is the only zoom source, so pointer pinch / ctrl+wheel from the same gesture are not applied twice.
+  // page unless they are cancelled. While a gesture is active it is the only zoom source, so a pointer pinch
+  // or ctrl+wheel from the same gesture is not applied twice.
   let gesture: { scale: number } | undefined;
   type GestureLike = Event & { scale: number; clientX: number; clientY: number };
-  root.addEventListener('gesturestart', (ev) => {
+  canvas.addEventListener('gesturestart', (ev) => {
     ev.preventDefault();
     gesture = { scale: (ev as GestureLike).scale || 1 };
   });
-  root.addEventListener('gesturechange', (ev) => {
+  canvas.addEventListener('gesturechange', (ev) => {
     ev.preventDefault();
     const g = ev as GestureLike;
     if (!gesture || !g.scale) return;
@@ -244,18 +247,20 @@ export function renderGraph(g: Graph, focus: string | undefined, navigate: (path
     gesture.scale = g.scale;
     moved = true;
   });
-  root.addEventListener('gestureend', (ev) => {
+  canvas.addEventListener('gestureend', (ev) => {
     ev.preventDefault();
     gesture = undefined;
   });
   // Belt and braces for browsers that start a page zoom from a two-finger touch on the graph.
-  root.addEventListener(
-    'touchmove',
-    (ev) => {
-      if (ev.touches.length > 1) ev.preventDefault();
-    },
-    { passive: false },
-  );
+  for (const type of ['touchstart', 'touchmove'] as const) {
+    canvas.addEventListener(
+      type,
+      (ev) => {
+        if (ev.touches.length > 1) ev.preventDefault();
+      },
+      { passive: false },
+    );
+  }
   root.addEventListener(
     'wheel',
     (ev) => {
@@ -343,5 +348,5 @@ export function renderGraph(g: Graph, focus: string | undefined, navigate: (path
     button('全体表示', '全体を表示', fit),
     h('span', { class: 'muted' }, 'ホイール・ピンチで拡大縮小、ドラッグで移動。キーボード: + − 0 と矢印キー'),
   );
-  return h('div', { class: 'graph-wrap' }, toolbar, root);
+  return h('div', { class: 'graph-wrap' }, toolbar, canvas);
 }

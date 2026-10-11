@@ -75,6 +75,7 @@ table.grid th, table.grid td { border-bottom: 1px solid var(--border); padding: 
 .searchform input { flex: 1; }
 .backlinks { margin-top: 2rem; border-top: 1px solid var(--border); }
 /* Graph: pan / zoom. --s (SVG units per screen pixel) keeps labels and outlines at a fixed on-screen size. */
+.graph-canvas { touch-action: none; }
 .graph-toolbar { display: flex; gap: .4rem; align-items: center; flex-wrap: wrap; margin-bottom: .4rem; }
 .graph-toolbar button { padding: .15rem .6rem; }
 .graph-toolbar .muted { font-size: .8rem; }
