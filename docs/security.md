@@ -107,13 +107,13 @@ IAM Policy Simulator で確認済みの結果: 境界下のロールからの pr
 
 | 層 | 仕組み |
 |---|---|
-| コード | CodeQL (security-extended。CLI の仕様であるファイル↔HTTP の 2 ルールだけを `.github/codeql/codeql-config.yml` で理由付きで除外し、Windows の `.cmd` エディタ起動の 1 件だけを `codeql.yml` のゲートで「ルール + ファイル + 指摘の fingerprint」を指定して理由付きで承認済みとして扱う。承認済みの指摘も notice として毎回出力するので、不要になれば気付けます)、独自の lint（XSS につながる API、トークンの保存先、依存の許可リスト、MCP / CLI の削除禁止、ログに秘密を残さない）、セキュリティ回帰テスト（`test/security.test.ts`） |
+| コード | CodeQL (security-extended。CLI の仕様であるファイル↔HTTP の 2 ルールだけを `.github/codeql/codeql-config.yml` で理由付きで除外し、Windows の `.cmd` エディタ起動の 1 件だけを `codeql.yml` のゲートで「ルール + ファイル + 指摘の fingerprint」を指定して理由付きで承認済みとして扱う。承認済みの指摘も notice として毎回出力するので、不要になれば気付けます)、独自の lint（XSS につながる API、トークンの保存先、依存の許可リスト、MCP / CLI の削除禁止、ログに秘密を残さない、コードへの bidi 制御文字の直書きの禁止（Trojan Source）、メールアドレスから ID を作る `EmailSubscription` の禁止）、セキュリティ回帰テスト（`test/security.test.ts`） |
 | 依存 | `npm audit`（実行時の依存）、`npm audit signatures`、Dependency Review（PR）、Dependabot（npm と Actions） |
 | 秘密情報 | gitleaks（全履歴）、GitHub の Secret scanning と push protection |
 | IaC | cdk-nag（AwsSolutions。例外はすべて理由を記録）、checkov（合成済みテンプレート。除外は `.checkov.yaml` に理由付きで記載） |
 | パイプライン | zizmor、lint による「SHA 固定・`permissions` の明示・`id-token` は deploy ジョブのみ・`pull_request_target` 禁止」の検査、OpenSSF Scorecard |
 | 実行環境 | デプロイ後のスモークテスト（ヘッダ、認証、リダイレクト）、OWASP ZAP baseline（毎週、dev）、AI セキュリティレビュー（任意、PR） |
-| 公開時の情報管理 | Public リポジトリでは、ログ、サマリ、artifact を誰でも読めます。環境固有の値（アカウント ID、ホストゾーン、ホスト名、User Pool ID など）はマスクと伏せ字にし（`scripts/ci/mask.sh`、`scripts/ci/redact.mjs`）、合成済みのアセンブリは Environment シークレットを鍵に暗号化と改ざん検知を行います（`scripts/ci/seal.sh`、encrypt-then-MAC）。lint で強制しています |
+| 公開時の情報管理 | Public リポジトリでは、ログ、サマリ、artifact を誰でも読めます。環境固有の値（アカウント ID、ホストゾーン、ホスト名、User Pool ID など）はマスクと伏せ字にし（`scripts/ci/mask.sh`、`scripts/ci/redact.mjs`）、合成済みのアセンブリは Environment シークレットを鍵に暗号化と改ざん検知を行います（`scripts/ci/seal.sh`、encrypt-then-MAC）。lint で強制しています。アラームの通知先（`MCPWIKI_ALARM_EMAIL`）は、そのままの形と記号を除いた形の両方をマスクし、公開の出力からはメールアドレスをすべて伏せ字にします。CI はダミーのアドレスで合成し、アドレスが購読先以外（論理 ID、構成上のパス、マニフェストなど）に出ていないことを検査します（`scripts/ci/check-email-exposure.mjs`） |
 | デプロイ | build / synth は認証情報なしで実行し、deploy ジョブだけが OIDC を使います（`--ignore-scripts`、キャッシュなし、合成済みアセンブリをそのままデプロイ） |
 
 ## 2026-10 のセキュリティレビュー（対応状況）
@@ -128,6 +128,10 @@ IAM Policy Simulator で確認済みの結果: 境界下のロールからの pr
 | Medium | 検索で閲覧できない記事の内容を推測できる | 対応済み |
 | Medium | 通知メールの購読が CI デプロイで消える / ログの不足 / 秘密が環境変数に平文 / 共有の同時実行枠 | 対応済み |
 | Low | 過去の版の範囲、ID 衝突、境界の偽装、トークン失効の競合、レビュー済みの権限、MCP の書き込み制限、カーソル、再インデックス、リンクの判定、属性の書き換え、外部画像、バックアップ、CAA など | 対応済み |
+| Medium | 侵害の兆候（作った覚えのないアカウント、無効にしたアカウントの再有効化、大量のデータ取得）に気付く仕組みがない（2026 年 10 月の JPCERT/CC などの注意喚起を受けた点検） | 対応済み（重要な操作とアプリを通さない Cognito の操作の通知、User-Agent の記録、`scripts/ioc-check.mjs`）。公表された IP は、稼働開始以降のログに見つかりませんでした |
+| Medium | 多要素認証が TOTP だけで、偽のログイン画面に弱い | 対応済み（パスキー。ユーザ検証を必須とし、MFA を満たす） |
+| Medium | アラームの通知先のアドレスが、記号を除いた形で dev の公開デプロイログに出た（CDK の `EmailSubscription` がアドレスから論理 ID を作るため。GitHub のマスクは元の形にしか効かない） | 対応済み（該当の実行のログを削除、固定の ID に変更、lint と CI の検査、記号を除いた形もマスク）。prod には出ていません |
+| Low | テストのコードに bidi 制御文字が直書きされていた | 対応済み（エスケープに置換し、lint で禁止） |
 | Low（受容） | WAF の本文ルールの一部が count のまま | 記事の本文に HTML やコード例が入るため。描画時の無害化と CSP で補っています |
 
 ## 既知の制約
@@ -135,3 +139,6 @@ IAM Policy Simulator で確認済みの結果: 境界下のロールからの pr
 - Cognito Plus（脅威保護）は使っていません（コストのため）。
 - dev には WAF を付けていません（コストのため）。スロットリング、予約同時実行数、ユーザ単位のレート制限で補っています。
 - オリジン用シークレットのローテーションは手動です（値を更新したあと再デプロイ。切り替えの間、短時間 403 が出ます）。
+- パスキーを使えない場面のために、パスワードと TOTP でのサインインを残しています。TOTP は偽のログイン画面に弱いので、全員がパスキーに移ったら外すことを検討します。
+- MCPWiki からは、利用者が登録したパスキーの一覧を取得できません（`aws.cognito.signin.user.admin` スコープのトークンが必要で、API はこれを拒否しています）。登録済みの端末でもう一度登録しようとすると、ログイン画面に「Passkey is not supported」と表示されます。
+- アプリを通さない Cognito の操作の検知は、アカウントの CloudTrail（マルチリージョン証跡）に依存します。対象はユーザ単位の管理操作だけで、ユーザプールの設定変更（CloudFormation のデプロイでも行われる）は通知しません。
