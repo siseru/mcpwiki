@@ -351,13 +351,26 @@ async function historyView(id: string) {
 
 async function graphView(id: string | undefined) {
   const tagEdges = new URLSearchParams(location.search).get('tags') === '1';
-  const g = await api<Graph>('GET', `/api/graph?${id ? `id=${id}&depth=2&` : ''}${tagEdges ? 'tags=1' : ''}`);
+  // Whole wiki: up to 1000 articles (the server's cap), so links between them are not cut off at 200.
+  const g = await api<Graph>('GET', `/api/graph?${id ? `id=${id}&depth=2&` : 'limit=1000&'}${tagEdges ? 'tags=1' : ''}`);
   const toggle = link(`${location.pathname}${tagEdges ? '' : '?tags=1'}`, tagEdges ? 'タグの関連を隠す' : 'タグの関連も表示');
+  // Say exactly what a truncated whole-wiki graph leaves out (the counts cover readable articles only).
+  const omitted =
+    !id && g.truncated && g.total !== undefined
+      ? h(
+          'div',
+          { class: 'notice' },
+          `全 ${g.total.toLocaleString()} 件のうち、リンクの多い ${g.nodes.length.toLocaleString()} 件を表示しています。`,
+          g.hiddenLinks ? `表示していない記事との間のリンク ${g.hiddenLinks.toLocaleString()} 本は描かれていません。` : '',
+          '記事ごとの「関連グラフ」では、その記事のつながりをすべて見られます。',
+        )
+      : null;
   return h(
     'div',
     null,
     h('h1', null, id ? `関連グラフ: ${g.nodes.find((n) => n.id === id)?.title ?? id}` : '全体グラフ'),
-    h('p', { class: 'muted' }, `${g.nodes.length} 記事 / ${g.edges.length} 関連${g.truncated ? '（一部のみ表示）' : ''} ・ `, toggle),
+    h('p', { class: 'muted' }, `${g.nodes.length} 記事 / ${g.edges.length} 関連${g.truncated && !omitted ? '（一部のみ表示）' : ''} ・ `, toggle),
+    omitted,
     g.nodes.length ? renderGraph(g, id, navigate) : h('p', null, '関連する記事はありません。'),
   );
 }

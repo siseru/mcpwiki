@@ -155,7 +155,8 @@ export const TOOLS: ToolDef[] = [
     name: 'get_graph',
     title: 'Get knowledge graph',
     description:
-      'Article relationship graph. With id: the neighborhood (links in both directions) up to depth 1-3. Without id: all readable articles. ' +
+      'Article relationship graph. With id: the neighborhood (links in both directions) up to depth 1-3. Without id: all readable articles; ' +
+      'over the limit, the most linked ones (see total / hiddenLinks; explore the rest with id). ' +
       'Edges: kind "link" (directed Markdown link from -> to) and, if include_tag_edges, kind "tag" (undirected, shared tags).',
     inputSchema: {
       type: 'object',
@@ -169,7 +170,8 @@ export const TOOLS: ToolDef[] = [
     },
     annotations: { readOnlyHint: true, openWorldHint: false },
     run: async (s, p, a) =>
-      withNotice({ ...(await s.graph(p, { id: a.id as string, depth: a.depth, tagEdges: a.include_tag_edges as boolean, limit: a.limit })) }),
+      // MCP keeps a 300-node cap (LLM context) even though the web UI may ask for more.
+      withNotice({ ...(await s.graph(p, { id: a.id as string, depth: a.depth, tagEdges: a.include_tag_edges as boolean, limit: Math.min(Number(a.limit ?? 200) || 200, 300) })) }),
   },
   {
     name: 'list_attachments',

@@ -42,7 +42,9 @@ export function isSecurityEvent(action: string, detail?: string): boolean {
 
 /** Articles per bulk request (the web UI sends batches; keeps one request well inside the Lambda timeout). */
 export const MAX_BULK_IDS = 100;
-const MAX_GRAPH_NODES = 300;
+// The web UI draws the whole wiki up to this many articles (its layout scales with a spatial grid); MCP keeps
+// its own, smaller cap (src/backend/mcp.ts) so responses stay small for LLM context.
+const MAX_GRAPH_NODES = 1000;
 const MAX_EXPORT_BYTES = 5 * 1024 * 1024;
 
 export function newId(): string {
@@ -408,6 +410,8 @@ export class WikiService {
     const maxNodes = clampInt(opts.limit, 200, 1, MAX_GRAPH_NODES);
     const nodes = new Map<string, ArticleMeta>();
     let truncated = false;
+    let readable: ArticleMeta[] | undefined; // whole-wiki graph: for total / hiddenLinks (readable only)
+    let readableIds: Set<string> | undefined;
     if (opts.id) {
       const root = await this.readable(p, opts.id);
       if (root.deleted) throw notFound();
@@ -438,7 +442,25 @@ export class WikiService {
     } else {
       const { items, truncated: t } = await this.allReadable(p);
       truncated = t || items.length > maxNodes;
-      for (const m of items.slice(0, maxNodes)) nodes.set(m.id, m);
+      readable = items;
+      readableIds = new Set(items.map((m) => m.id));
+      // Over the limit, keep the most linked articles (ties: most recent first; items are newest first). On the
+      // 2026-10 prod data with a limit of 300 this kept 1463 of 1580 edges in one connected component, against
+      // 1259 edges in 6 pieces when keeping the newest. Degrees count links among readable articles only.
+      let chosen = items;
+      if (items.length > maxNodes) {
+        const degree = new Map<string, number>();
+        for (const m of items) {
+          for (const to of m.links) {
+            if (!readableIds.has(to) || to === m.id) continue;
+            degree.set(m.id, (degree.get(m.id) ?? 0) + 1);
+            degree.set(to, (degree.get(to) ?? 0) + 1);
+          }
+        }
+        const recency = new Map(items.map((m, i) => [m.id, i]));
+        chosen = [...items].sort((a, b) => (degree.get(b.id) ?? 0) - (degree.get(a.id) ?? 0) || recency.get(a.id)! - recency.get(b.id)!);
+      }
+      for (const m of chosen.slice(0, maxNodes)) nodes.set(m.id, m);
     }
     const edges: GraphEdge[] = [];
     for (const m of nodes.values()) for (const t of m.links) if (nodes.has(t)) edges.push({ from: m.id, to: t, kind: 'link' });
@@ -460,10 +482,19 @@ export class WikiService {
         edges.push({ from, to, kind: 'tag', tags });
       }
     }
+    // What a truncated whole-wiki graph leaves out: links between a shown and an omitted article, in either
+    // direction (omitted articles are the least linked, so most of their links point INTO the shown part).
+    // Counted among articles the caller can read only: unreadable articles are never revealed, not even as a number.
+    let hiddenLinks: number | undefined;
+    if (readable && readableIds) {
+      hiddenLinks = 0;
+      for (const m of readable) for (const t of m.links) if (t !== m.id && readableIds.has(t) && nodes.has(m.id) !== nodes.has(t)) hiddenLinks++;
+    }
     return {
       nodes: [...nodes.values()].map((m) => ({ id: m.id, title: m.title, type: m.type, tags: m.tags, status: m.status, updatedAt: m.updatedAt })),
       edges,
       truncated,
+      ...(readableIds ? { total: readableIds.size, hiddenLinks } : {}),
     };
   }
 

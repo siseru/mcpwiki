@@ -116,3 +116,49 @@ test('mine filter: list and search return only articles the caller owns', async 
   assert.deepEqual(ids(await call(users.bob, 'GET', '/api/search?q=fruit&mine=1&tag=f')), ['m-b']);
   assert.deepEqual(ids(await call(users.alice, 'GET', `/api/search?q=${encodeURIComponent('Bob')}&mine=1`)), [], 'substring fallback respects mine too');
 });
+
+test('whole-wiki graph: up to 1000 nodes, most-linked kept when over the limit, omissions counted (readable only)', async () => {
+  const { call, tool } = setup();
+  // An old hub that 30 later articles link to, then 230 newer articles in a chain, then one owner-only article.
+  await call(users.alice, 'POST', '/api/articles', { id: 'hub', title: 'Hub', body: 'old hub' });
+  for (let i = 0; i < 260; i++) {
+    const links = [i > 0 ? `[p](/wiki/n${i - 1})` : '', i < 30 ? '[h](/wiki/hub)' : ''].join(' ');
+    await call(users.alice, 'POST', '/api/articles', { id: `n${i}`, title: `N${i}`, body: `x ${links}` });
+  }
+  await call(users.alice, 'POST', '/api/articles', { id: 'secret', title: 'Secret', body: 'see [h](/wiki/hub) [n](/wiki/n5)', readScope: 'owner', writeScope: 'owner' });
+
+  // bob can read 261 articles (not alice's owner-only one)
+  const def = (await call(users.bob, 'GET', '/api/graph')).json;
+  assert.equal(def.nodes.length, 200);
+  assert.equal(def.truncated, true);
+  assert.equal(def.total, 261, 'owner-only article is not counted for others');
+  assert.ok(def.nodes.some((n: any) => n.id === 'hub'), 'the old but most linked article is kept');
+  assert.ok(!def.nodes.some((n: any) => n.id === 'secret'));
+  const shown = new Set(def.nodes.map((n: any) => n.id));
+  // every readable link is drawn, counted as hidden (one end omitted), or lies wholly inside the omitted part
+  const ids = new Set(def.nodes.map((n: any) => n.id));
+  const chain = Array.from({ length: 260 }, (_, i) => i).filter((i) => i > 0).map((i) => [`n${i}`, `n${i - 1}`]);
+  const hubLinks = Array.from({ length: 30 }, (_, i) => [`n${i}`, 'hub']);
+  const readableLinks = [...chain, ...hubLinks];
+  const crossing = readableLinks.filter(([a, b]) => ids.has(a) !== ids.has(b)).length;
+  assert.equal(def.hiddenLinks, crossing);
+  assert.ok(crossing > 0);
+  assert.equal(def.edges.length, readableLinks.filter(([a, b]) => ids.has(a) && ids.has(b)).length);
+  assert.ok(def.edges.every((e: any) => shown.has(e.from) && shown.has(e.to)));
+
+  const all = (await call(users.bob, 'GET', '/api/graph?limit=1000')).json;
+  assert.equal(all.nodes.length, 261);
+  assert.equal(all.truncated, false);
+  assert.equal(all.hiddenLinks, 0);
+  assert.equal(all.edges.length, 259 + 30, 'every readable link is drawn');
+
+  // alice also sees her owner-only article and its links
+  const mine = (await call(users.alice, 'GET', '/api/graph?limit=1000')).json;
+  assert.equal(mine.total, 262);
+  assert.equal(mine.edges.length, 259 + 30 + 2);
+
+  // MCP: default 200 (most linked), schema max 300; the handler clamps as well
+  assert.equal((await tool(users.bob, 'get_graph', {})).data.nodes.length, 200);
+  assert.equal((await tool(users.bob, 'get_graph', { limit: 300 })).data.nodes.length, 261);
+  assert.ok((await tool(users.bob, 'get_graph', {})).data.nodes.some((n: any) => n.id === 'hub'));
+});
