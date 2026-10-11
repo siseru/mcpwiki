@@ -226,11 +226,16 @@ test('passkeys: only managed-login tokens are accepted; adding a passkey is web-
   assert.match(String(direct.body), /direct sign-in API/);
 
   assert.equal((await call(users.alice, 'POST', '/api/me/passkey', undefined, { client: CLI })).status, 403);
+  // Cognito refuses passkey MFA until a passkey exists (registration cancelled): a clear 409, nothing recorded
+  const early = await call(users.alice, 'POST', '/api/me/passkey');
+  assert.equal(early.status, 409);
+  assert.equal(early.json.error.code, 'no_passkey');
   assert.equal((dir as any).passkeyMfa.size, 0);
+  (dir as any).passkeys.add('alice'); // registered on the managed-login page
   assert.equal((await call(users.alice, 'POST', '/api/me/passkey')).status, 200);
   assert.ok((dir as any).passkeyMfa.has('alice'));
   const audit = (await call(users.admin, 'GET', `/api/admin/audit?date=${new Date().toISOString().slice(0, 10)}`)).json.items;
-  assert.ok(audit.some((e: any) => e.action === 'user.passkey' && e.actor === 'alice'));
+  assert.equal(audit.filter((e: any) => e.action === 'user.passkey' && e.actor === 'alice').length, 1, 'only the successful attempt is audited');
   const { isSecurityEvent } = await import('../src/backend/service.js');
   assert.ok(isSecurityEvent('user.passkey'), 'a new sign-in factor is reported');
 });

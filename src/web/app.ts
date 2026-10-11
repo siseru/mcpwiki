@@ -494,30 +494,41 @@ function editorView(a: any | null) {
 
 // ------------------------------------------------------------------ account
 
+const PASSKEY_PENDING = 'mcpwiki.passkeyPending';
+
 /**
- * Account page: sign-in methods. "Add a passkey" first lets the user's passkeys satisfy MFA (API), then hands
- * over to the managed-login passkey page, which comes back here. Registration itself happens entirely between
- * the browser and Cognito; MCPWiki never sees the key.
+ * Account page: sign-in methods. "Add a passkey" hands over to the managed-login passkey page, which comes back
+ * here; only then (Cognito refuses it before a passkey exists) the API lets the user's passkeys satisfy MFA.
+ * Registration itself happens entirely between the browser and Cognito; MCPWiki never sees the key.
  */
 function accountView() {
   // Managed login may append parameters when it returns here; nothing in them is needed.
   if (location.search) history.replaceState(null, '', '/account');
   const msg = h('div', { role: 'status' });
+  if (sessionStorage.getItem(PASSKEY_PENDING)) {
+    sessionStorage.removeItem(PASSKEY_PENDING);
+    msg.appendChild(h('div', { class: 'muted' }, 'パスキーを有効にしています…'));
+    api('POST', '/api/me/passkey').then(
+      () => {
+        clear(msg);
+        msg.appendChild(h('div', { class: 'notice' }, 'パスキーを登録しました。次回から、ログイン画面でパスキーを選んでサインインできます。'));
+      },
+      (e) => {
+        clear(msg);
+        if (e instanceof ApiError && e.status === 409) msg.appendChild(h('div', { class: 'notice' }, 'パスキーは登録されませんでした（キャンセルされた可能性があります）。もう一度「パスキーを追加」を押してください。'));
+        else msg.appendChild(errorBox(e));
+      },
+    );
+  }
   const add = h('button', {
     type: 'button',
-    onclick: async () => {
+    onclick: () => {
       clear(msg);
-      add.disabled = true;
-      try {
-        await api('POST', '/api/me/passkey');
-        const u = new URL('/passkeys/add', config.cognitoDomain);
-        u.searchParams.set('client_id', config.webClientId);
-        u.searchParams.set('redirect_uri', `${location.origin}/account`);
-        location.assign(u.toString());
-      } catch (e) {
-        add.disabled = false;
-        msg.appendChild(errorBox(e));
-      }
+      sessionStorage.setItem(PASSKEY_PENDING, '1');
+      const u = new URL('/passkeys/add', config.cognitoDomain);
+      u.searchParams.set('client_id', config.webClientId);
+      u.searchParams.set('redirect_uri', `${location.origin}/account`);
+      location.assign(u.toString());
     },
   }, 'パスキーを追加');
   const li = (...c: (Node | string)[]) => h('li', null, ...c);
