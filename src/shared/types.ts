@@ -116,7 +116,18 @@ export interface ArticleSummary {
   updatedAt: string;
   updatedBy: string;
   canEdit: boolean;
+  /** Someone has marked the current content as reviewed. */
+  verified: boolean;
   deleted?: boolean;
+}
+
+/** Admin bulk action over several articles (web UI only). */
+export interface BulkResult {
+  id: string;
+  /** changed: a new version was written; unchanged: nothing to do; failed: see error. */
+  outcome: 'changed' | 'unchanged' | 'failed';
+  version?: number;
+  error?: { code: string; message: string };
 }
 
 export interface GraphNode {

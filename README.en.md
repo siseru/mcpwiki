@@ -55,6 +55,7 @@ Each article has a **read scope** and a **write scope**. All permission checks l
 ## Admin features
 
 - **Site title:** change it under Admin → Site settings (up to 60 characters). It is used in the header, the browser tab and the `index.md` of exports. The sign-in screen keeps showing "MCPWiki".
+- **Bulk actions on articles:** under Admin → Articles, pick articles with checkboxes (filter, select all shown, load all) and either mark them as reviewed or set their read / write scopes to given values (widening included). The confirmation says how many articles would be widened. Each article goes through the same checks as a normal edit (the write scope can't be wider than the read scope, and so on) and gets its own history entry and audit record. Failures are listed with their reason and don't stop the other articles. Only admins in the web UI can use this.
 - **Download all articles:** Admin → OKF import/export → "Download all articles as ZIP" downloads every live article (whatever its read scope; deleted articles are excluded) as an OKF bundle: `index.md` plus `wiki/<id>.md` files with frontmatter. The bundle can be imported as is. Attachments are not included. The ZIP is written to `exports/` in S3 and handed out as a presigned URL valid for 5 minutes; a lifecycle rule deletes it after one day. Only admins in the web UI can use it (not the CLI or MCP), and each export is recorded in the audit log as `export-all`.
 
 ## Attachments (images and PDF)

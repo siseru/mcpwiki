@@ -123,3 +123,9 @@ button.small { padding: .1rem .5rem; font-size: .8rem; }
 #footer:empty { display: none; }
 .inline-form { display: flex; gap: .5rem; flex-wrap: wrap; }
 .inline-form input[type=text] { flex: 1; min-width: 12rem; max-width: 30rem; }
+.bulk-bar { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; margin: .5rem 0; }
+.bulk-filter { flex: 1; min-width: 14rem; max-width: 28rem; }
+.bulk-sep { width: 1px; align-self: stretch; background: var(--border); margin: 0 .3rem; }
+.bulk-more { display: flex; gap: .5rem; margin: .5rem 0 1rem; }
+table.grid tr.selected td { background: #ddf4ff; }
+.badge.verified { color: var(--ok); border-color: var(--ok); }

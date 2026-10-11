@@ -1,7 +1,7 @@
 // MCPWiki single-page app (user + admin screens).
 import type { ArticleSummary, Graph, HistoryEntry, ReadScope, SiteSettings, WriteScope } from '../shared/types.js';
 import { READ_SCOPES, STATUSES, WRITE_SCOPES } from '../shared/types.js';
-import { scopesValid } from '../shared/permissions.js';
+import { isReadScopeWider, isWriteScopeWider, scopesValid } from '../shared/permissions.js';
 import { linkTargetToId } from '../shared/text.js';
 import { REPOSITORY_URL, VERSION } from '../shared/version.js';
 import { api, apiBlob, ApiError } from './api.js';
@@ -528,30 +528,201 @@ async function adminUsers() {
 
 async function adminArticles() {
   const deleted = new URLSearchParams(location.search).get('deleted') === '1';
-  const r = await api<{ items: ArticleSummary[] }>('GET', `/api/admin/articles?limit=200${deleted ? '&deleted=1' : ''}`);
+  if (deleted) return adminDeletedArticles();
+  return adminLiveArticles();
+}
+
+async function adminDeletedArticles() {
+  const r = await api<{ items: ArticleSummary[] }>('GET', '/api/admin/articles?limit=200&deleted=1');
   const rows = r.items.map((a) =>
     h(
       'tr',
       null,
-      h('td', null, deleted ? a.title : link(`/wiki/${a.id}`, a.title)),
+      h('td', null, a.title),
       h('td', null, a.id),
       h('td', null, a.ownerName),
       h('td', null, scopeBadge(a)),
       h('td', null, fmtDate(a.updatedAt)),
-      h(
-        'td',
-        null,
-        deleted
-          ? h('button', { class: 'secondary', onclick: async () => (await api('POST', `/api/articles/${a.id}/restore`), void render()) }, '復元')
-          : link(`/wiki/${a.id}/edit`, '権限・内容を編集'),
-      ),
+      h('td', null, h('button', { class: 'secondary', onclick: async () => (await api('POST', `/api/articles/${a.id}/restore`), void render()) }, '復元')),
     ),
   );
   return h(
     'div',
     null,
-    h('p', null, link(deleted ? '/admin/articles' : '/admin/articles?deleted=1', deleted ? '← 公開中の記事' : '削除済みの記事を表示')),
+    h('p', null, link('/admin/articles', '← 公開中の記事')),
     h('table', { class: 'grid' }, h('thead', null, h('tr', null, ...['タイトル', 'ID', 'オーナー', '権限', '更新', ''].map((t) => h('th', null, t)))), h('tbody', null, ...rows)),
+  );
+}
+
+/** Live articles with checkboxes and bulk actions (review, scopes). Bulk requests are sent in batches. */
+async function adminLiveArticles() {
+  const BATCH = 50;
+  const items: ArticleSummary[] = [];
+  const selected = new Set<string>();
+  let cursor: string | undefined;
+  let busy = false;
+
+  const status = h('div', { role: 'status', class: 'bulk-status' });
+  const count = h('span', { class: 'muted' });
+  const filter = h('input', { type: 'search', placeholder: 'タイトル・ID・オーナー・タグで絞り込み', 'aria-label': '絞り込み', class: 'bulk-filter' });
+  const all = h('input', { type: 'checkbox', 'aria-label': '表示中の記事をすべて選択' });
+  const tbody = h('tbody');
+  const more = h('div', { class: 'bulk-more' });
+  const readSel = h('select', { 'aria-label': '閲覧範囲' }, h('option', { value: '' }, '閲覧: 変更しない'), ...READ_SCOPES.map((v) => h('option', { value: v }, `閲覧: ${READ_LABEL[v]}`)));
+  const writeSel = h('select', { 'aria-label': '編集範囲' }, h('option', { value: '' }, '編集: 変更しない'), ...WRITE_SCOPES.map((v) => h('option', { value: v }, `編集: ${WRITE_LABEL[v]}`)));
+  const verifyBtn = h('button', { type: 'button', onclick: () => void run('verify') }, 'レビュー済みにする');
+  const scopeBtn = h('button', { type: 'button', onclick: () => void run('permissions') }, '権限を変更');
+
+  type Page = { items: ArticleSummary[]; cursor?: string };
+  const nextPage = (): Promise<Page> => api<Page>('GET', `/api/admin/articles?limit=200${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`);
+  const matches = (a: ArticleSummary) => {
+    const q = filter.value.trim().toLowerCase();
+    return !q || [a.title, a.id, a.ownerName, ...a.tags].some((v) => v.toLowerCase().includes(q));
+  };
+  const visible = () => items.filter(matches);
+
+  function refreshControls() {
+    const vis = visible();
+    const chosen = vis.filter((a) => selected.has(a.id)).length;
+    all.checked = vis.length > 0 && chosen === vis.length;
+    all.indeterminate = chosen > 0 && chosen < vis.length;
+    count.textContent = `${selected.size} 件を選択中（表示 ${vis.length} 件 / 読み込み済み ${items.length} 件）`;
+    for (const b of [verifyBtn, scopeBtn]) b.disabled = busy || selected.size === 0;
+    scopeBtn.disabled ||= !readSel.value && !writeSel.value;
+  }
+
+  function drawRows() {
+    clear(tbody);
+    for (const a of visible()) {
+      const box = h('input', {
+        type: 'checkbox',
+        checked: selected.has(a.id),
+        'aria-label': `${a.title} を選択`,
+        onchange: (ev: Event) => {
+          if ((ev.target as HTMLInputElement).checked) selected.add(a.id);
+          else selected.delete(a.id);
+          refreshControls();
+        },
+      });
+      tbody.appendChild(
+        h(
+          'tr',
+          { class: selected.has(a.id) ? 'selected' : '' },
+          h('td', null, box),
+          h('td', null, link(`/wiki/${a.id}`, a.title)),
+          h('td', null, a.id),
+          h('td', null, a.ownerName),
+          h('td', null, scopeBadge(a)),
+          h('td', null, a.verified ? h('span', { class: 'badge verified' }, 'レビュー済み') : h('span', { class: 'muted' }, '—')),
+          h('td', null, fmtDate(a.updatedAt)),
+          h('td', null, link(`/wiki/${a.id}/edit`, '編集')),
+        ),
+      );
+    }
+    refreshControls();
+  }
+
+  async function load(everything: boolean) {
+    clear(more);
+    do {
+      const r = await nextPage();
+      items.push(...r.items);
+      cursor = r.cursor;
+    } while (everything && cursor);
+    drawRows();
+    if (cursor) {
+      append(more, [
+        h('button', { type: 'button', class: 'secondary', onclick: () => void load(false) }, 'さらに 200 件読み込む'),
+        h('button', { type: 'button', class: 'secondary', onclick: () => void load(true) }, 'すべて読み込む'),
+      ]);
+    }
+  }
+
+  async function run(action: 'verify' | 'permissions') {
+    const ids = items.filter((a) => selected.has(a.id)).map((a) => a.id);
+    if (!ids.length) return;
+    const readScope = (readSel.value || undefined) as ReadScope | undefined;
+    const writeScope = (writeSel.value || undefined) as WriteScope | undefined;
+    if (action === 'permissions') {
+      if (readScope && writeScope && !scopesValid(readScope, writeScope)) {
+        alert('編集範囲を閲覧範囲より広くすることはできません。');
+        return;
+      }
+      const widened = items.filter(
+        (a) => selected.has(a.id) && ((readScope && isReadScopeWider(readScope, a.readScope)) || (writeScope && isWriteScopeWider(writeScope, a.writeScope))),
+      ).length;
+      const target = `${readScope ? `閲覧範囲を「${READ_LABEL[readScope]}」` : ''}${readScope && writeScope ? '、' : ''}${writeScope ? `編集範囲を「${WRITE_LABEL[writeScope]}」` : ''}`;
+      const warn = widened ? `\n\n注意: ${widened} 件の記事で権限が広がります（これまで見られなかった人が閲覧・編集できるようになります）。` : '';
+      if (!confirm(`選択した ${ids.length} 件の記事の${target}に変更します。${warn}`)) return;
+    } else if (!confirm(`選択した ${ids.length} 件の記事をレビュー済みにします。`)) return;
+
+    busy = true;
+    refreshControls();
+    clear(status);
+    const done = { changed: 0, unchanged: 0, failed: [] as string[] };
+    try {
+      for (let i = 0; i < ids.length; i += BATCH) {
+        status.textContent = `処理中… ${i} / ${ids.length}`;
+        const r = await api<{ results: { id: string; outcome: string; error?: { message: string } }[] }>('POST', '/api/admin/articles/bulk', {
+          action,
+          ids: ids.slice(i, i + BATCH),
+          ...(action === 'permissions' ? { readScope, writeScope } : {}),
+        });
+        for (const x of r.results) {
+          if (x.outcome === 'changed') done.changed++;
+          else if (x.outcome === 'unchanged') done.unchanged++;
+          else done.failed.push(`${x.id}: ${x.error?.message ?? 'failed'}`);
+        }
+      }
+    } catch (e) {
+      clear(status);
+      status.appendChild(errorBox(e));
+    } finally {
+      busy = false;
+    }
+    if (status.textContent?.startsWith('処理中')) clear(status);
+    status.appendChild(h('div', { class: done.failed.length ? 'error' : 'notice' }, `変更 ${done.changed} 件 / 変更不要 ${done.unchanged} 件 / 失敗 ${done.failed.length} 件`));
+    if (done.failed.length) status.appendChild(h('ul', null, ...done.failed.map((f) => h('li', null, f))));
+    // Reload what is on screen so badges show the new state; keep the selection for follow-up actions.
+    const loaded = items.length;
+    items.length = 0;
+    cursor = undefined;
+    do {
+      const r = await nextPage();
+      items.push(...r.items);
+      cursor = r.cursor;
+    } while (cursor && items.length < loaded);
+    for (const id of [...selected]) if (!items.some((a) => a.id === id)) selected.delete(id);
+    drawRows();
+    void refreshSidebar();
+  }
+
+  all.addEventListener('change', () => {
+    for (const a of visible()) {
+      if (all.checked) selected.add(a.id);
+      else selected.delete(a.id);
+    }
+    drawRows();
+  });
+  filter.addEventListener('input', drawRows);
+  readSel.addEventListener('change', refreshControls);
+  writeSel.addEventListener('change', refreshControls);
+
+  await load(false);
+  return h(
+    'div',
+    null,
+    h('p', null, link('/admin/articles?deleted=1', '削除済みの記事を表示')),
+    h('div', { class: 'bulk-bar' }, filter, count),
+    h('div', { class: 'bulk-bar' }, verifyBtn, h('span', { class: 'bulk-sep' }), readSel, writeSel, scopeBtn),
+    status,
+    h(
+      'table',
+      { class: 'grid' },
+      h('thead', null, h('tr', null, h('th', null, all), ...['タイトル', 'ID', 'オーナー', '権限', 'レビュー', '更新', ''].map((t) => h('th', null, t)))),
+      tbody,
+    ),
+    more,
   );
 }
 

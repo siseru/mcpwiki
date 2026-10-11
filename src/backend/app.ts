@@ -199,6 +199,7 @@ export function createApp(d: AppDeps): (req: Req) => Promise<Res> {
         return json(200, await svc.importBundle(p, r.body ?? Buffer.alloc(0)));
       },
     },
+    { method: 'POST', re: /^\/api\/admin\/articles\/bulk$/, handler: async (p, r) => (webOnly(p), json(200, await svc.bulk(p, parseJson(r)))) },
     { method: 'PUT', re: /^\/api\/admin\/settings$/, handler: async (p, r) => (webOnly(p), json(200, await svc.updateSettings(p, parseJson(r)))) },
     { method: 'POST', re: /^\/api\/admin\/export$/, handler: async (p) => (webOnly(p), json(200, await d.attachments.exportArchive(p))) },
     { method: 'POST', re: /^\/api\/admin\/reindex$/, handler: async (p, r) => (webOnly(p), json(200, await svc.reindex(p, (parseJson(r) as { cursor?: string }).cursor))) },
