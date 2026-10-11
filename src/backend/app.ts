@@ -151,7 +151,7 @@ export function createApp(d: AppDeps): (req: Req) => Promise<Res> {
     },
     { method: 'GET', re: /^\/api\/articles\/([^/]+)\/history$/, handler: async (p, _r, [id]) => json(200, { items: await svc.history(p, id!) }) },
     { method: 'GET', re: /^\/api\/articles\/([^/]+)\/backlinks$/, handler: async (p, _r, [id]) => json(200, { items: await svc.backlinks(p, id!) }) },
-    { method: 'GET', re: /^\/api\/search$/, handler: async (p, r) => json(200, { items: await svc.search(p, r.query.q ?? '', { tag: r.query.tag, limit: r.query.limit }) }) },
+    { method: 'GET', re: /^\/api\/search$/, handler: async (p, r) => json(200, { items: await svc.search(p, r.query.q ?? '', { tag: r.query.tag, mine: r.query.mine === '1' || r.query.mine === 'true', limit: r.query.limit }) }) },
     { method: 'GET', re: /^\/api\/tags$/, handler: async (p) => json(200, { items: await svc.tags(p) }) },
     {
       method: 'GET',

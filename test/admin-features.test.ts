@@ -103,3 +103,16 @@ test('admin bulk: verify and set scopes (widening included) for many articles, w
   assert.ok(audit.some((e: any) => e.action === 'bulk' && /^verify: 3 changed, 0 unchanged, 2 failed$/.test(e.detail)));
   assert.ok(audit.filter((e: any) => e.action === 'verify').length >= 3, 'each article is audited individually too');
 });
+
+test('mine filter: list and search return only articles the caller owns', async () => {
+  const { call } = setup();
+  await call(users.alice, 'POST', '/api/articles', { id: 'm-a', title: 'Mine apple', body: 'fruit', tags: ['f'] });
+  await call(users.bob, 'POST', '/api/articles', { id: 'm-b', title: 'Bob apple', body: 'fruit', tags: ['f'] });
+  const ids = (r: any) => r.json.items.map((i: any) => i.id).sort();
+  assert.deepEqual(ids(await call(users.alice, 'GET', '/api/articles?mine=1')), ['m-a']);
+  assert.deepEqual(ids(await call(users.alice, 'GET', '/api/articles?mine=1&tag=f')), ['m-a']);
+  assert.deepEqual(ids(await call(users.alice, 'GET', '/api/search?q=apple')), ['m-a', 'm-b']);
+  assert.deepEqual(ids(await call(users.alice, 'GET', '/api/search?q=apple&mine=1')), ['m-a']);
+  assert.deepEqual(ids(await call(users.bob, 'GET', '/api/search?q=fruit&mine=1&tag=f')), ['m-b']);
+  assert.deepEqual(ids(await call(users.alice, 'GET', `/api/search?q=${encodeURIComponent('Bob')}&mine=1`)), [], 'substring fallback respects mine too');
+});

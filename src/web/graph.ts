@@ -12,6 +12,9 @@ interface P {
 }
 
 const MAX_ZOOM = 20;
+/** Node radius in screen pixels: least to most linked (diameter ratio 2). */
+const R_MIN = 6;
+const R_MAX = 12;
 const LABEL_PX = 12;
 
 /** Approximate on-screen width of a label (no layout pass): CJK and other wide characters ~1em, the rest ~0.6em. */
@@ -94,10 +97,20 @@ export function renderGraph(g: Graph, focus: string | undefined, navigate: (path
     neighbours.get(e.from)!.add(e.to);
     neighbours.get(e.to)!.add(e.from);
   }
+  // Size = number of links to and from the article within this graph (shared-tag edges don't count, unless
+  // the graph has nothing else). sqrt keeps a few hubs from shrinking everything else to the minimum.
+  const linkEdges = edges.some((e) => e.kind === 'link') ? edges.filter((e) => e.kind === 'link') : edges;
+  const links = new Map<string, number>();
+  for (const e of linkEdges) {
+    links.set(e.from, (links.get(e.from) ?? 0) + 1);
+    links.set(e.to, (links.get(e.to) ?? 0) + 1);
+  }
+  const maxLinks = Math.max(1, ...links.values());
+  const radius = (id: string) => R_MIN + (R_MAX - R_MIN) * Math.sqrt((links.get(id) ?? 0) / maxLinks);
 
   const root = svg('svg', { viewBox: `0 0 ${W} ${H}`, class: 'graph', role: 'img', 'aria-label': 'Article graph', tabindex: '0', preserveAspectRatio: 'xMidYMid meet' });
   root.appendChild(
-    svg('defs', {}, svg('marker', { id: 'arrow', viewBox: '0 0 10 10', refX: '18', refY: '5', markerWidth: '6', markerHeight: '6', orient: 'auto-start-reverse' }, svg('path', { d: 'M 0 0 L 10 5 L 0 10 z', class: 'arrow' }))),
+    svg('defs', {}, svg('marker', { id: 'arrow', viewBox: '0 0 10 10', refX: '10', refY: '5', markerWidth: '6', markerHeight: '6', orient: 'auto-start-reverse' }, svg('path', { d: 'M 0 0 L 10 5 L 0 10 z', class: 'arrow' }))),
   );
   const scene = svg('g', {});
   root.appendChild(scene);
@@ -118,10 +131,11 @@ export function renderGraph(g: Graph, focus: string | undefined, navigate: (path
     const p = pos.get(node.id)!;
     const isFocus = node.id === focus;
     const grp = svg('g', { class: `node${isFocus ? ' focus' : ''}`, tabindex: '0', role: 'link', 'data-id': node.id });
-    const circle = svg('circle', { cx: p.x, cy: p.y, r: isFocus ? 10 : 7 });
+    const r = radius(node.id);
+    const circle = svg('circle', { cx: p.x, cy: p.y, r });
     const label = node.title.length > 24 ? node.title.slice(0, 23) + '…' : node.title;
     const text = svg('text', { x: p.x + 11, y: p.y + 4 }, label);
-    grp.append(circle, text, svg('title', {}, `${node.title} (${node.id})`));
+    grp.append(circle, text, svg('title', {}, `${node.title} (${node.id}) · リンク ${links.get(node.id) ?? 0}`));
     const go = () => navigate(`/wiki/${node.id}`);
     grp.addEventListener('click', () => {
       if (!moved) go();
@@ -134,7 +148,7 @@ export function renderGraph(g: Graph, focus: string | undefined, navigate: (path
     grp.addEventListener('focus', () => highlight(node.id));
     grp.addEventListener('blur', () => highlight(undefined));
     scene.appendChild(grp);
-    nodes.push({ id: node.id, grp, circle, text, p, r: isFocus ? 10 : 7, w: labelWidthPx(label) });
+    nodes.push({ id: node.id, grp, circle, text, p, r, w: labelWidthPx(label) });
   }
   const byPriority = [...nodes].sort((a, b) => (b.id === focus ? 1 : 0) - (a.id === focus ? 1 : 0) || (degree.get(b.id) ?? 0) - (degree.get(a.id) ?? 0));
 
@@ -164,6 +178,18 @@ export function renderGraph(g: Graph, focus: string | undefined, navigate: (path
       n.text.setAttribute('y', String(n.p.y + 4 * s));
     }
     for (const l of lines) {
+      // Lines stop at the circles' edges, so arrowheads touch the target whatever its size.
+      const a = pos.get(l.from)!;
+      const b = pos.get(l.to)!;
+      const d = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+      const ux = (b.x - a.x) / d;
+      const uy = (b.y - a.y) / d;
+      const ra = Math.min(radius(l.from) * s, d / 3);
+      const rb = Math.min(radius(l.to) * s, d / 3);
+      l.el.setAttribute('x1', String(a.x + ux * ra));
+      l.el.setAttribute('y1', String(a.y + uy * ra));
+      l.el.setAttribute('x2', String(b.x - ux * rb));
+      l.el.setAttribute('y2', String(b.y - uy * rb));
       l.el.setAttribute('stroke-width', String(1.2 * s));
       if (l.tag) l.el.setAttribute('stroke-dasharray', `${4 * s} ${3 * s}`);
     }

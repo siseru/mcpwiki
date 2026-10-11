@@ -49,6 +49,8 @@ Each article has a **read scope** and a **write scope**. All permission checks l
 ## UI and help pages
 
 - A sidebar is always visible on the left: navigation, help, recently updated articles and tags. On narrow screens, toggle it with ☰.
+- Lists, tag pages and search results can be limited to articles you own ("自分がオーナーの記事のみ", `?mine=1`; also "自分の記事" in the sidebar).
+- The graph can be zoomed and panned. Node size follows the number of links (up to 2× the diameter), and where labels would overlap, the more linked articles win.
 - On first start, two help articles are created automatically: `help-wiki` (how to use MCPWiki) and `help-markdown` (Markdown guide; the pages are in Japanese). Everyone can read them; only admins can edit them. While nobody has edited a page, updates to its source are applied after a deploy. Pages that an admin has edited or deleted are left alone (never re-created or overwritten). The sources are `src/backend/seed/*.md`; run `node scripts/gen-seed.mjs` after changing them (lint checks that the generated file is up to date).
 - The footer shows the MCPWiki version (the tag name for releases, `git describe` otherwise) and a link to GitHub.
 

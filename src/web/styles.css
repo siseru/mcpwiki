@@ -86,7 +86,7 @@ svg.graph .edge { stroke: #8c959f; }
 svg.graph .edge.tag { stroke: #c4a7e7; }
 svg.graph .arrow { fill: #8c959f; }
 svg.graph .node circle { fill: var(--accent); cursor: pointer; }
-svg.graph .node.focus circle { fill: var(--danger); }
+svg.graph .node.focus circle { fill: var(--danger); stroke: var(--fg); stroke-width: calc(var(--s, 1) * 2px); }
 svg.graph .node text { font-size: calc(var(--s, 1) * 12px); fill: var(--fg); cursor: pointer; paint-order: stroke; stroke: var(--bg2); stroke-width: calc(var(--s, 1) * 3px); stroke-linejoin: round; }
 svg.graph .node:focus { outline: none; }
 svg.graph .node:focus circle { stroke: #000; stroke-width: calc(var(--s, 1) * 2px); }
@@ -129,3 +129,4 @@ button.small { padding: .1rem .5rem; font-size: .8rem; }
 .bulk-more { display: flex; gap: .5rem; margin: .5rem 0 1rem; }
 table.grid tr.selected td { background: #ddf4ff; }
 .badge.verified { color: var(--ok); border-color: var(--ok); }
+.mine-toggle { display: inline-flex; align-items: center; gap: .3rem; font-size: .9rem; color: var(--muted); margin: 0 0 .6rem; cursor: pointer; }
