@@ -11,6 +11,10 @@ mask() {
 }
 mask "${AWS_ACCOUNT_ID:-}"
 mask "${MCPWIKI_ALARM_EMAIL:-}" # appears in the synthesized templates (SNS subscription) and hence in the infra diff
+# ... and with punctuation dropped: the form CDK's EmailSubscription used in logical ids (still printed while
+# CloudFormation deletes those older subscriptions).
+alarm_plain="$(printf '%s' "${MCPWIKI_ALARM_EMAIL:-}" | tr -cd 'A-Za-z0-9')"
+mask "$alarm_plain"
 if [ -n "${MCPWIKI_DOMAINS:-}" ]; then
   while IFS= read -r v; do mask "$v"; done < <(jq -r '.hostedZoneId, .zoneName, (.hosts // {} | .[] | ., "auth." + .)' <<< "$MCPWIKI_DOMAINS")
 fi

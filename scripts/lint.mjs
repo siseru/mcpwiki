@@ -28,6 +28,10 @@ for (const dir of ['src', 'test', 'scripts']) {
   }
 }
 
+// Alarm e-mail: EmailSubscription derives the construct (logical) id from the address, which CloudFormation
+// events then print in public deploy logs. Use sns.Subscription with a fixed id instead.
+check('src/infra', /\bEmailSubscription\s*\(/, 'EmailSubscription puts the e-mail address into the logical id (use sns.Subscription with a fixed id)');
+
 // XSS: the web app must never write HTML strings into the DOM.
 check('src/web', /\.(innerHTML|outerHTML)\s*=|insertAdjacentHTML|document\.write|\beval\(|new Function\(/, 'raw HTML / dynamic code in web app');
 // Secrets / tokens must not be persisted in localStorage.
