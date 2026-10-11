@@ -1,30 +1,49 @@
-// Small force-directed graph renderer (SVG, no dependencies).
+// Small force-directed graph renderer (SVG, no dependencies) with pan / zoom.
+// Zooming changes the viewBox; node radii, label sizes and stroke widths are rescaled so they keep their
+// on-screen size, which is what lets zooming in pull overlapping labels apart.
 import type { Graph } from '../shared/types.js';
-import { svg } from './dom.js';
+import { h, svg } from './dom.js';
 
-export function renderGraph(g: Graph, focus: string | undefined, navigate: (path: string) => void): SVGElement {
-  const W = 900;
-  const H = 600;
+interface P {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+}
+
+const MAX_ZOOM = 20;
+const LABEL_PX = 12;
+
+/** Approximate on-screen width of a label (no layout pass): CJK and other wide characters ~1em, the rest ~0.6em. */
+function labelWidthPx(label: string): number {
+  let w = 0;
+  for (const ch of label) w += ch.charCodeAt(0) > 0x2e7f ? LABEL_PX : LABEL_PX * 0.6;
+  return w;
+}
+
+function layout(g: Graph, focus: string | undefined) {
   const n = g.nodes.length;
-  const pos = new Map<string, { x: number; y: number; vx: number; vy: number }>();
+  // The canvas grows with the graph (constant area per node) instead of squeezing everything into one size.
+  const W = Math.max(900, Math.sqrt(n) * 120);
+  const H = Math.round((W * 2) / 3);
+  const pos = new Map<string, P>();
   g.nodes.forEach((node, i) => {
     const a = (2 * Math.PI * i) / Math.max(1, n);
-    pos.set(node.id, { x: W / 2 + Math.cos(a) * 200, y: H / 2 + Math.sin(a) * 200, vx: 0, vy: 0 });
+    pos.set(node.id, { x: W / 2 + Math.cos(a) * W * 0.22, y: H / 2 + Math.sin(a) * H * 0.33, vx: 0, vy: 0 });
   });
   if (focus && pos.has(focus)) Object.assign(pos.get(focus)!, { x: W / 2, y: H / 2 });
   const edges = g.edges.filter((e) => pos.has(e.from) && pos.has(e.to));
   const k = Math.sqrt((W * H) / Math.max(1, n)) * 0.6;
+  const ps = [...pos.values()];
   for (let iter = 0; iter < 300; iter++) {
     const t = 1 - iter / 300;
-    const ps = [...pos.values()];
     for (let i = 0; i < ps.length; i++)
       for (let j = i + 1; j < ps.length; j++) {
         const a = ps[i]!;
         const b = ps[j]!;
         const dx = a.x - b.x || 0.01;
         const dy = a.y - b.y || 0.01;
-        const d2 = dx * dx + dy * dy;
-        const f = (k * k) / d2;
+        const f = (k * k) / (dx * dx + dy * dy);
         a.vx += dx * f * 0.05;
         a.vy += dy * f * 0.05;
         b.vx -= dx * f * 0.05;
@@ -43,44 +62,254 @@ export function renderGraph(g: Graph, focus: string | undefined, navigate: (path
       b.vy -= dy * f;
     }
     for (const p of ps) {
-      p.vx += (W / 2 - p.x) * 0.002;
-      p.vy += (H / 2 - p.y) * 0.002;
+      // Gravity instead of hard walls: clamping to the canvas piled nodes up along its edges. The view fits
+      // whatever bounding box results, so positions may leave the nominal W x H.
+      p.vx += (W / 2 - p.x) * 0.006;
+      p.vy += (H / 2 - p.y) * 0.009;
       const v = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
       const max = 20 * t + 1;
       if (v > max) {
         p.vx = (p.vx / v) * max;
         p.vy = (p.vy / v) * max;
       }
-      p.x = Math.min(W - 40, Math.max(40, p.x + p.vx));
-      p.y = Math.min(H - 20, Math.max(20, p.y + p.vy));
+      p.x += p.vx;
+      p.y += p.vy;
       p.vx *= 0.6;
       p.vy *= 0.6;
     }
   }
-  const root = svg('svg', { viewBox: `0 0 ${W} ${H}`, class: 'graph', role: 'img', 'aria-label': 'Article graph' });
+  return { W, H, k, pos, edges };
+}
+
+export function renderGraph(g: Graph, focus: string | undefined, navigate: (path: string) => void): HTMLElement {
+  const { W, H, pos, edges } = layout(g, focus);
+
+  // Label priority: the focus article first, then the most connected ones.
+  const degree = new Map<string, number>();
+  const neighbours = new Map<string, Set<string>>();
+  for (const node of g.nodes) neighbours.set(node.id, new Set());
+  for (const e of edges) {
+    degree.set(e.from, (degree.get(e.from) ?? 0) + 1);
+    degree.set(e.to, (degree.get(e.to) ?? 0) + 1);
+    neighbours.get(e.from)!.add(e.to);
+    neighbours.get(e.to)!.add(e.from);
+  }
+
+  const root = svg('svg', { viewBox: `0 0 ${W} ${H}`, class: 'graph', role: 'img', 'aria-label': 'Article graph', tabindex: '0', preserveAspectRatio: 'xMidYMid meet' });
   root.appendChild(
     svg('defs', {}, svg('marker', { id: 'arrow', viewBox: '0 0 10 10', refX: '18', refY: '5', markerWidth: '6', markerHeight: '6', orient: 'auto-start-reverse' }, svg('path', { d: 'M 0 0 L 10 5 L 0 10 z', class: 'arrow' }))),
   );
+  const scene = svg('g', {});
+  root.appendChild(scene);
+
+  const lines: { el: SVGElement; tag: boolean; from: string; to: string }[] = [];
   for (const e of edges) {
     const a = pos.get(e.from)!;
     const b = pos.get(e.to)!;
-    const line = svg('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y, class: e.kind === 'tag' ? 'edge tag' : 'edge', ...(e.kind === 'link' ? { 'marker-end': 'url(#arrow)' } : {}) });
-    if (e.tags) line.appendChild(svg('title', {}, e.tags.join(', ')));
-    root.appendChild(line);
+    const el = svg('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y, class: e.kind === 'tag' ? 'edge tag' : 'edge', ...(e.kind === 'link' ? { 'marker-end': 'url(#arrow)' } : {}) });
+    if (e.tags) el.appendChild(svg('title', {}, e.tags.join(', ')));
+    scene.appendChild(el);
+    lines.push({ el, tag: e.kind === 'tag', from: e.from, to: e.to });
   }
+
+  let moved = false; // a drag that ended on a node must not navigate
+  const nodes: { id: string; grp: SVGElement; circle: SVGElement; text: SVGElement; p: P; r: number; w: number }[] = [];
   for (const node of g.nodes) {
     const p = pos.get(node.id)!;
-    const grp = svg('g', { class: `node${node.id === focus ? ' focus' : ''}`, tabindex: '0', role: 'link' });
-    grp.appendChild(svg('circle', { cx: p.x, cy: p.y, r: node.id === focus ? 10 : 7 }));
+    const isFocus = node.id === focus;
+    const grp = svg('g', { class: `node${isFocus ? ' focus' : ''}`, tabindex: '0', role: 'link', 'data-id': node.id });
+    const circle = svg('circle', { cx: p.x, cy: p.y, r: isFocus ? 10 : 7 });
     const label = node.title.length > 24 ? node.title.slice(0, 23) + '…' : node.title;
-    grp.appendChild(svg('text', { x: p.x + 11, y: p.y + 4 }, label));
-    grp.appendChild(svg('title', {}, `${node.title} (${node.id})`));
+    const text = svg('text', { x: p.x + 11, y: p.y + 4 }, label);
+    grp.append(circle, text, svg('title', {}, `${node.title} (${node.id})`));
     const go = () => navigate(`/wiki/${node.id}`);
-    grp.addEventListener('click', go);
+    grp.addEventListener('click', () => {
+      if (!moved) go();
+    });
     grp.addEventListener('keydown', (ev) => {
       if ((ev as KeyboardEvent).key === 'Enter') go();
     });
-    root.appendChild(grp);
+    grp.addEventListener('pointerenter', () => highlight(node.id));
+    grp.addEventListener('pointerleave', () => highlight(undefined));
+    grp.addEventListener('focus', () => highlight(node.id));
+    grp.addEventListener('blur', () => highlight(undefined));
+    scene.appendChild(grp);
+    nodes.push({ id: node.id, grp, circle, text, p, r: isFocus ? 10 : 7, w: labelWidthPx(label) });
   }
-  return root;
+  const byPriority = [...nodes].sort((a, b) => (b.id === focus ? 1 : 0) - (a.id === focus ? 1 : 0) || (degree.get(b.id) ?? 0) - (degree.get(a.id) ?? 0));
+
+  // Hovering a node shows its label and dims everything that is not connected to it.
+  function highlight(id: string | undefined) {
+    root.classList.toggle('hl', !!id);
+    const near = id ? new Set([id, ...neighbours.get(id)!]) : new Set<string>();
+    for (const n of nodes) n.grp.classList.toggle('on', near.has(n.id));
+    for (const l of lines) l.el.classList.toggle('on', !!id && (l.from === id || l.to === id));
+  }
+
+  // ---- view box
+  const vb = { x: 0, y: 0, w: W, h: H };
+  let frame = 0;
+  /** Screen pixels per SVG unit (the viewBox is letterboxed with "meet"). */
+  const pxPerUnit = () => {
+    const r = root.getBoundingClientRect();
+    return r.width && r.height ? Math.min(r.width / vb.w, r.height / vb.h) : 900 / vb.w;
+  };
+  function apply() {
+    frame = 0;
+    root.setAttribute('viewBox', `${vb.x} ${vb.y} ${vb.w} ${vb.h}`);
+    const s = 1 / pxPerUnit(); // SVG units per screen pixel
+    for (const n of nodes) {
+      n.circle.setAttribute('r', String(n.r * s));
+      n.text.setAttribute('x', String(n.p.x + (n.r + 4) * s));
+      n.text.setAttribute('y', String(n.p.y + 4 * s));
+    }
+    for (const l of lines) {
+      l.el.setAttribute('stroke-width', String(1.2 * s));
+      if (l.tag) l.el.setAttribute('stroke-dasharray', `${4 * s} ${3 * s}`);
+    }
+    root.style.setProperty('--s', String(s));
+    placeLabels(s);
+  }
+  /**
+   * Greedy label placement in screen space: in priority order, a label is shown only if its box does not
+   * overlap one already shown, so a crowded view shows the most connected articles and zooming in reveals
+   * the rest. Hovered nodes (and their neighbours) always show their labels (CSS).
+   */
+  function placeLabels(s: number) {
+    const placed: { x0: number; y0: number; x1: number; y1: number }[] = [];
+    const pad = 2 * s;
+    for (const n of byPriority) {
+      const x0 = n.p.x - (n.r + 2) * s;
+      const x1 = n.p.x + (n.r + 4) * s + n.w * s;
+      const y0 = n.p.y - 9 * s;
+      const y1 = n.p.y + 6 * s;
+      const offscreen = x1 < vb.x || x0 > vb.x + vb.w || y1 < vb.y || y0 > vb.y + vb.h;
+      const clash = !offscreen && placed.some((b) => x0 < b.x1 + pad && x1 + pad > b.x0 && y0 < b.y1 + pad && y1 + pad > b.y0);
+      n.grp.classList.toggle('nolabel', offscreen || clash);
+      if (!offscreen && !clash) placed.push({ x0, y0, x1, y1 });
+    }
+  }
+  const schedule = () => {
+    if (!frame) frame = requestAnimationFrame(apply);
+  };
+  function zoomAt(factor: number, cx = vb.x + vb.w / 2, cy = vb.y + vb.h / 2) {
+    const w = Math.min(W * 2, Math.max(W / MAX_ZOOM, vb.w / factor));
+    const f = w / vb.w;
+    vb.x = cx - (cx - vb.x) * f;
+    vb.y = cy - (cy - vb.y) * f;
+    vb.w = w;
+    vb.h = vb.h * f;
+    schedule();
+  }
+  function fit() {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const n of nodes) {
+      x0 = Math.min(x0, n.p.x);
+      y0 = Math.min(y0, n.p.y);
+      x1 = Math.max(x1, n.p.x + 160); // room for the label
+      y1 = Math.max(y1, n.p.y);
+    }
+    const pad = 30;
+    let w = x1 - x0 + pad * 2;
+    let hh = y1 - y0 + pad * 2;
+    // Keep the canvas aspect ratio so "meet" does not add uneven margins.
+    if (w / hh > W / H) hh = (w * H) / W;
+    else w = (hh * W) / H;
+    Object.assign(vb, { x: (x0 + x1) / 2 - w / 2, y: (y0 + y1) / 2 - hh / 2, w, h: hh });
+    schedule();
+  }
+  const toSvg = (clientX: number, clientY: number) => {
+    const r = root.getBoundingClientRect();
+    const ppu = pxPerUnit();
+    // Centre of the letterboxed viewBox is the centre of the element.
+    return { x: vb.x + vb.w / 2 + (clientX - (r.left + r.width / 2)) / ppu, y: vb.y + vb.h / 2 + (clientY - (r.top + r.height / 2)) / ppu };
+  };
+
+  // ---- input: wheel zoom, drag to pan, pinch zoom, keyboard
+  root.addEventListener(
+    'wheel',
+    (ev) => {
+      ev.preventDefault();
+      const p = toSvg(ev.clientX, ev.clientY);
+      zoomAt(Math.exp(-ev.deltaY * (ev.deltaMode === 1 ? 0.05 : 0.0015)), p.x, p.y);
+    },
+    { passive: false },
+  );
+  const pointers = new Map<number, { x: number; y: number }>();
+  let pinch: { d: number } | undefined;
+  root.addEventListener('pointerdown', (ev) => {
+    pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+    moved = false;
+    if (pointers.size === 2) {
+      const [a, b] = [...pointers.values()];
+      pinch = { d: Math.hypot(a!.x - b!.x, a!.y - b!.y) };
+    }
+  });
+  root.addEventListener('pointermove', (ev) => {
+    const prev = pointers.get(ev.pointerId);
+    if (!prev) return;
+    const cur = { x: ev.clientX, y: ev.clientY };
+    if (pointers.size === 1) {
+      const dx = cur.x - prev.x;
+      const dy = cur.y - prev.y;
+      if (!moved && Math.hypot(dx, dy) < 3) return; // keep clicks on nodes working
+      if (!moved) {
+        moved = true;
+        root.setPointerCapture(ev.pointerId);
+        root.classList.add('dragging');
+      }
+      const ppu = pxPerUnit();
+      vb.x -= dx / ppu;
+      vb.y -= dy / ppu;
+      schedule();
+    } else if (pointers.size === 2 && pinch) {
+      pointers.set(ev.pointerId, cur);
+      const [a, b] = [...pointers.values()];
+      const d = Math.hypot(a!.x - b!.x, a!.y - b!.y);
+      const mid = toSvg((a!.x + b!.x) / 2, (a!.y + b!.y) / 2);
+      if (pinch.d > 0) zoomAt(d / pinch.d, mid.x, mid.y);
+      pinch.d = d;
+      moved = true;
+      return;
+    }
+    pointers.set(ev.pointerId, cur);
+  });
+  const release = (ev: PointerEvent) => {
+    pointers.delete(ev.pointerId);
+    if (pointers.size < 2) pinch = undefined;
+    if (!pointers.size) root.classList.remove('dragging');
+  };
+  root.addEventListener('pointerup', release);
+  root.addEventListener('pointercancel', release);
+  root.addEventListener('keydown', (ev) => {
+    const step = vb.w * 0.1;
+    const keys: Record<string, () => void> = {
+      '+': () => zoomAt(1.25),
+      '=': () => zoomAt(1.25),
+      '-': () => zoomAt(0.8),
+      '0': fit,
+      ArrowLeft: () => ((vb.x -= step), schedule()),
+      ArrowRight: () => ((vb.x += step), schedule()),
+      ArrowUp: () => ((vb.y -= step), schedule()),
+      ArrowDown: () => ((vb.y += step), schedule()),
+    };
+    const fn = keys[ev.key];
+    if (fn && ev.target === root) {
+      ev.preventDefault();
+      fn();
+    }
+  });
+  new ResizeObserver(schedule).observe(root);
+  requestAnimationFrame(fit);
+
+  const button = (label: string, title: string, fn: () => void) => h('button', { type: 'button', class: 'secondary', title, 'aria-label': title, onclick: fn }, label);
+  const toolbar = h(
+    'div',
+    { class: 'graph-toolbar' },
+    button('＋', '拡大', () => zoomAt(1.4)),
+    button('−', '縮小', () => zoomAt(1 / 1.4)),
+    button('全体表示', '全体を表示', fit),
+    h('span', { class: 'muted' }, 'ホイール・ピンチで拡大縮小、ドラッグで移動。キーボード: + − 0 と矢印キー'),
+  );
+  return h('div', { class: 'graph-wrap' }, toolbar, root);
 }
