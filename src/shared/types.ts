@@ -151,6 +151,10 @@ export interface Graph {
   nodes: GraphNode[];
   edges: GraphEdge[];
   truncated: boolean;
+  /** Whole-wiki graph only: number of articles the caller can read (nodes may be fewer when truncated). */
+  total?: number;
+  /** Whole-wiki graph only: links between a shown and an omitted readable article (either direction). */
+  hiddenLinks?: number;
 }
 
 /** Runtime configuration published to browsers / CLI at /config.json. */
