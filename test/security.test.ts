@@ -167,7 +167,50 @@ test('list cursor is opaque and tamper-proof', async () => {
 
 test('titles reject bidi overrides and C1 controls; bad %-encoding is a 400', async () => {
   const { call } = setup();
-  assert.equal((await call(users.alice, 'POST', '/api/articles', { title: 'abc‮txt.exe', body: '' })).status, 400);
+  assert.equal((await call(users.alice, 'POST', '/api/articles', { title: 'abc\u202etxt.exe', body: '' })).status, 400);
   assert.equal((await call(users.alice, 'POST', '/api/articles', { title: 'a\u009bb', body: '' })).status, 400);
   assert.equal((await call(users.admin, 'PUT', '/api/admin/users/%E0%A4%A', { role: 'viewer' })).status, 400);
+});
+
+test('security-relevant admin actions notify the administrator; routine edits do not', async () => {
+  const { isSecurityEvent, WikiService } = await import('../src/backend/service.js');
+  const { MemoryStore } = await import('../src/backend/mem-store.js');
+  const { MemoryUserDirectory } = await import('../src/backend/users.js');
+  for (const a of ['user.invite', 'user.update', 'export-all', 'import', 'settings']) assert.ok(isSecurityEvent(a), a);
+  assert.ok(isSecurityEvent('bulk', 'scopes all/all: 3 changed'));
+  for (const [a, d] of [['bulk', 'verify: 3 changed'], ['update', 'scopes all/owner'], ['create', undefined], ['verify', undefined], ['export', '2 articles']] as const) {
+    assert.ok(!isSecurityEvent(a, d), `${a} ${d}`);
+  }
+  const sent: { subject: string; message: string }[] = [];
+  const svc = new WikiService(new MemoryStore(), new MemoryUserDirectory(), undefined, {
+    envName: 'test',
+    notify: async (subject, message) => void sent.push({ subject, message }),
+  });
+  const admin = { sub: 'sub-admin', username: 'admin', role: 'admin' as const, clientId: 'web-client', via: 'web' as const, issuedAt: 0 };
+  await svc.create(admin, { id: 'n1', title: 'N1', body: 'x' });
+  await svc.bulk(admin, { action: 'verify', ids: ['n1'] });
+  assert.equal(sent.length, 0, 'create / bulk verify are routine');
+  await svc.updateSettings(admin, { title: 'Wiki 名前' });
+  await svc.bulk(admin, { action: 'permissions', ids: ['n1'], writeScope: 'all' });
+  assert.deepEqual(sent.map((s) => s.subject), ['MCPWiki test: settings by admin', 'MCPWiki test: bulk by admin']);
+  assert.match(sent[0]!.message, /action:  settings\nactor:   admin \(via web\)/);
+  assert.match(sent[1]!.message, /detail:  scopes -\/all: 1 changed, 0 unchanged, 0 failed/);
+  // a failing notifier never breaks the action
+  const broken = new WikiService(new MemoryStore(), new MemoryUserDirectory(), undefined, { notify: async () => { throw new Error('sns down'); } });
+  assert.equal((await broken.updateSettings(admin, { title: 'ok' })).title, 'ok');
+});
+
+test('/.well-known/security.txt (RFC 9116) is public and points at the private advisory form', async () => {
+  const withRepo = setup({ repositoryUrl: 'https://github.com/example/wiki' });
+  const r = await withRepo.call(null, 'GET', '/.well-known/security.txt');
+  assert.equal(r.status, 200);
+  assert.match(r.res.headers['content-type'], /^text\/plain/);
+  const body = String(r.res.body);
+  assert.match(body, /^Contact: https:\/\/github\.com\/example\/wiki\/security\/advisories\/new$/m);
+  assert.match(body, /^Policy: https:\/\/github\.com\/example\/wiki\/blob\/main\/SECURITY\.md$/m);
+  assert.match(body, /^Canonical: https:\/\/wiki\.example\.com\/\.well-known\/security\.txt$/m);
+  const expires = Date.parse(/^Expires: (.+)$/m.exec(body)![1]!);
+  assert.ok(expires > Date.now() && expires < Date.now() + 366 * 86_400_000, 'Expires must be in the future and < 1 year (RFC 9116)');
+  assert.equal((await setup({ repositoryUrl: '' }).call(null, 'GET', '/.well-known/security.txt')).status, 404, 'no repository, no contact');
+  assert.equal((await withRepo.call(null, 'GET', '/.well-known/other.txt')).status, 401, 'other well-known paths stay behind auth');
 });

@@ -37,7 +37,7 @@ export const users = {
   nobody: { sub: 'sub-nobody', username: 'nobody', groups: [] as string[] },
 } satisfies Record<string, User>;
 
-export function setup(opts: { rateLimit?: { perMinute: number; writesPerMinute: number }; originSecret?: string } = {}) {
+export function setup(opts: { rateLimit?: { perMinute: number; writesPerMinute: number }; originSecret?: string; repositoryUrl?: string } = {}) {
   const store = new MemoryStore();
   const dir = new MemoryUserDirectory();
   const service = new WikiService(store, dir);

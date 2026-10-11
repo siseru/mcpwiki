@@ -19,6 +19,15 @@ const check = (glob, re, why) => {
   }
 };
 
+// Trojan Source (CVE-2021-42574): no literal bidi control characters in code; tests use \u escapes.
+for (const dir of ['src', 'test', 'scripts']) {
+  for (const f of files(join(root, dir)).filter((f) => /\.(ts|mjs|js|sh)$/.test(f))) {
+    readFileSync(f, 'utf8').split('\n').forEach((line, i) => {
+      if (/[\u202a-\u202e\u2066-\u2069]/.test(line)) violations.push(`${relative(root, f)}:${i + 1}: literal bidi control character (write it as a \\u escape)`);
+    });
+  }
+}
+
 // XSS: the web app must never write HTML strings into the DOM.
 check('src/web', /\.(innerHTML|outerHTML)\s*=|insertAdjacentHTML|document\.write|\beval\(|new Function\(/, 'raw HTML / dynamic code in web app');
 // Secrets / tokens must not be persisted in localStorage.

@@ -14,6 +14,7 @@ const add = (v) => {
   if (typeof v === 'string' && v.trim().length >= 4) values.add(v.trim());
 };
 add(process.env.AWS_ACCOUNT_ID);
+add(process.env.MCPWIKI_ALARM_EMAIL); // SNS subscription endpoint in the synthesized templates
 // Extra values / URLs (their host names are masked), comma-separated, e.g. REDACT_EXTRA=${{ vars.DEV_URL }}
 for (const item of (process.env.REDACT_EXTRA ?? '').split(',')) {
   try {
@@ -52,6 +53,8 @@ const literal = [...values].sort((a, b) => b.length - a.length);
 const redactLine = (line) => {
   let out = line;
   for (const v of literal) out = out.split(v).join('***');
+  // Any e-mail address (alarm recipients, invitations): never meant for public logs or job summaries.
+  out = out.replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, '***');
   // ARNs split on ":" and "/", so an account id inside an ARN is its own token.
   return out.replace(TOKEN, (tok) => (TOKEN_PATTERNS.some((re) => re.test(tok)) ? '***' : tok));
 };

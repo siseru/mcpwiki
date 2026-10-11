@@ -62,7 +62,10 @@
 - API Gateway を直接呼ばれないよう、CloudFront が付ける秘密ヘッダを Lambda が検証します。秘密は Secrets Manager から実行時に取得するので、Lambda の設定には現れません。
 - Lambda の IAM は最小権限です。予約同時実行数（dev 20 / prod 100）を設定し、共有アカウントの同時実行枠を使い切られないようにしています。
 - TLS 1.2 以上、ACM の自動更新（DNS 検証）、証明書の期限アラーム、CAA（Amazon のみ）を設定しています。
-- ログ: Lambda の構造化ログ（実際のクライアント IP は CloudFront Function が付けるヘッダから記録し、トークンと本文は記録しません）、API と CloudFront と S3 のアクセスログ、WAF のログ（認証ヘッダと Cookie は伏せ字）、監査ログ（保持 400 日）。CloudTrail はアカウント既存のマルチリージョン証跡を使います。
+- 検知と通知: 次の操作は、その場で詳細をメールで通知します（SNS。通知先はシークレット `MCPWIKI_ALARM_EMAIL`）。ユーザの招待、ロールの変更と無効化・再有効化、権限の一括変更、全記事のダウンロード、インポート、サイト設定の変更。アプリを通さない Cognito のユーザ管理（コンソール、CLI、`scripts/create-admin.sh`）も、アカウントの CloudTrail と EventBridge で検知して通知します。エラーの急増（スキャンや総当たり）などのアラームも同じ宛先に届きます。2026 年 10 月の JPCERT/CC 等の注意喚起で、気付きにくい兆候として挙げられた「作った覚えのないアカウント」「無効にしたはずのアカウントの再有効化」「大量のデータ取得」に対応します。
+- 注意喚起が出たときの確認: `node scripts/ioc-check.mjs` で、公表された IP アドレスや User-Agent とリクエストログを照合し、4xx の多い送信元、探索されたパス、最近の重要な管理操作を一覧できます（手順は [docs/deploy.md](deploy.md#9-運用)）。
+- 脆弱性の報告先: `/.well-known/security.txt`（RFC 9116）で、GitHub の非公開の報告フォームを案内します。
+- ログ: Lambda の構造化ログ（実際のクライアント IP は CloudFront Function が付けるヘッダから、User-Agent は 200 文字までを記録します。トークンと本文は記録しません）、監査イベント、API と CloudFront と S3 のアクセスログ、WAF のログ（認証ヘッダと Cookie は伏せ字）、監査ログ（保持 400 日）。CloudTrail はアカウント既存のマルチリージョン証跡を使います。
 - prod: AWS Backup（毎日、35 日保持、ボールトロック）、PITR、削除保護、RETAIN。
 
 ## dev / prod の分離（共有アカウント）

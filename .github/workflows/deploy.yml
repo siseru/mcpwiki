@@ -91,6 +91,7 @@ jobs:
       ENV_NAME: ${{ needs.build.outputs.env }}
       AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
       MCPWIKI_DOMAINS: ${{ secrets.MCPWIKI_DOMAINS }}
+      MCPWIKI_ALARM_EMAIL: ${{ secrets.MCPWIKI_ALARM_EMAIL }} # masked / redacted only (the assembly is pre-synthesized)
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

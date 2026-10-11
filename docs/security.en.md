@@ -99,8 +99,16 @@ English | [日本語](security.md)
   - the ACM certificate renews automatically (DNS validation)
   - an alarm warns before the certificate expires
   - CAA records allow only Amazon to issue certificates
+- **Detection and alerts** (SNS e-mail to the secret `MCPWIKI_ALARM_EMAIL`):
+  - These actions are e-mailed with details as they happen: user invitations, role changes, disabling and re-enabling users, bulk permission changes, full exports, imports and site settings changes.
+  - Cognito user administration that bypasses the app (console, CLI, `scripts/create-admin.sh`) is detected through the account's CloudTrail and EventBridge.
+  - The error / 4xx spike alarms (scanning, brute force) go to the same address.
+  - This covers the signs that the October 2026 advisories (JPCERT/CC and others) called easy to miss: unexpected accounts, accounts re-enabled after being disabled, and bulk data access.
+- **When an advisory is published:** `node scripts/ioc-check.mjs` matches the request logs against published IP addresses and User-Agents, and lists the top 4xx sources, probed paths and recent security-relevant admin actions (see [docs/deploy.en.md](deploy.en.md#9-operations)).
+- **Vulnerability reports:** `/.well-known/security.txt` (RFC 9116) points to GitHub's private reporting form.
 - **Logs:**
-  - Structured Lambda logs record the real client IP from a header set by a CloudFront Function. They never include tokens or request bodies.
+  - Structured Lambda logs record the real client IP from a header set by a CloudFront Function, and the User-Agent (up to 200 characters). They never include tokens or request bodies.
+  - Audit events are also written to the function log, so they can be searched together with the requests.
   - API, CloudFront and S3 access logs.
   - WAF logs, with `authorization` and `cookie` redacted.
   - The audit log is kept for 400 days.

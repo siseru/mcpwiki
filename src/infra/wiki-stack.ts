@@ -11,6 +11,8 @@ import {
   aws_cloudwatch_actions as cwActions,
   aws_cognito as cognito,
   aws_dynamodb as ddb,
+  aws_events as events,
+  aws_events_targets as eventTargets,
   aws_iam as iam,
   aws_lambda as lambda,
   aws_logs as logs,
@@ -477,6 +479,46 @@ export class WikiStack extends Stack {
     alarm('FnThrottles', fn.metricThrottles({ period: Duration.minutes(5) }), 1, 'API Lambda throttled');
     alarm('Api5xx', api.metricServerError({ period: Duration.minutes(5) }), 5, 'API 5xx responses');
     alarm('Api4xxSpike', api.metricClientError({ period: Duration.minutes(5) }), 500, 'Unusual number of 4xx (possible scanning / brute force)');
+
+    // Security-relevant admin actions in the app (role changes, invitations, re-enabled users, bulk permission
+    // changes, full export, import, settings) are e-mailed with details by the function itself.
+    fn.addEnvironment('SECURITY_TOPIC_ARN', topic.topicArn);
+    fn.addEnvironment('MCPWIKI_ENV', envName);
+    topic.grantPublish(fn);
+    // User administration that bypasses the app (console, CLI, scripts/create-admin.sh), seen through the
+    // account's CloudTrail. Calls made by the app's own role are excluded: the app reports those itself.
+    new events.Rule(this, 'CognitoAdminOutsideApp', {
+      description: `MCPWiki ${envName}: Cognito user administration outside the app`,
+      eventPattern: {
+        source: ['aws.cognito-idp'],
+        detailType: ['AWS API Call via CloudTrail'],
+        detail: {
+          eventSource: ['cognito-idp.amazonaws.com'],
+          eventName: [
+            'AdminCreateUser', 'AdminDeleteUser', 'AdminEnableUser', 'AdminDisableUser', 'AdminAddUserToGroup',
+            'AdminRemoveUserFromGroup', 'AdminSetUserPassword', 'AdminResetUserPassword', 'AdminSetUserMFAPreference',
+            'AdminUpdateUserAttributes', 'AdminLinkProviderForUser',
+          ],
+          requestParameters: { userPoolId: [userPool.userPoolId] },
+          userIdentity: { arn: events.Match.anythingButPrefix(`arn:${this.partition}:sts::${this.account}:assumed-role/${fn.role!.roleName}/`) },
+        },
+      },
+      targets: [
+        new eventTargets.SnsTopic(topic, {
+          message: events.RuleTargetInput.fromText(
+            [
+              `MCPWiki ${envName}: Cognito user administration outside the app`,
+              `action:  ${events.EventField.fromPath('$.detail.eventName')}`,
+              `user:    ${events.EventField.fromPath('$.detail.requestParameters.username')}`,
+              `by:      ${events.EventField.fromPath('$.detail.userIdentity.arn')}`,
+              `from IP: ${events.EventField.fromPath('$.detail.sourceIPAddress')}`,
+              `time:    ${events.EventField.fromPath('$.time')}`,
+              'If you did not do this, check the user pool and CloudTrail now.',
+            ].join('\n'),
+          ),
+        }),
+      ],
+    });
 
     // ---------------------------------------------------------------- outputs
     new CfnOutput(this, 'Url', { value: publicUrl });

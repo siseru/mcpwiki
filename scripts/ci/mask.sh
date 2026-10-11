@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Registers environment-specific values with the GitHub Actions log masker (run first in every job).
 # "::add-mask::" lines are consumed by the runner and never displayed; afterwards every occurrence of the
-# value in logs is shown as ***. Sources: AWS_ACCOUNT_ID, MCPWIKI_DOMAINS (JSON), REDACT_EXTRA (comma-separated
+# value in logs is shown as ***. Sources: AWS_ACCOUNT_ID, MCPWIKI_ALARM_EMAIL, MCPWIKI_DOMAINS (JSON), REDACT_EXTRA (comma-separated
 # values or URLs; for URLs the host is masked). See scripts/ci/redact.mjs for redacting piped output.
 set -euo pipefail
 count=0
@@ -10,6 +10,7 @@ mask() {
   if [ "${#v}" -ge 4 ]; then echo "::add-mask::$v"; count=$((count + 1)); fi
 }
 mask "${AWS_ACCOUNT_ID:-}"
+mask "${MCPWIKI_ALARM_EMAIL:-}" # appears in the synthesized templates (SNS subscription) and hence in the infra diff
 if [ -n "${MCPWIKI_DOMAINS:-}" ]; then
   while IFS= read -r v; do mask "$v"; done < <(jq -r '.hostedZoneId, .zoneName, (.hosts // {} | .[] | ., "auth." + .)' <<< "$MCPWIKI_DOMAINS")
 fi
