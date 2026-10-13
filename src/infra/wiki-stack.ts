@@ -408,6 +408,10 @@ export class WikiStack extends Stack {
       accessTokenValidity: Duration.minutes(60),
       idTokenValidity: Duration.minutes(60),
       refreshTokenValidity: Duration.hours(12),
+      // Time allowed between steps of one sign-in (password -> TOTP). The default 3 minutes is too short for a
+      // first sign-in that also installs an authenticator app and scans the QR code: the session expired and
+      // the restart showed a NEW secret while the user kept the code from the first one (2026-10, prod).
+      authSessionValidity: Duration.minutes(15),
       enableTokenRevocation: true,
       preventUserExistenceErrors: true,
     });
@@ -420,6 +424,7 @@ export class WikiStack extends Stack {
       accessTokenValidity: Duration.minutes(60),
       idTokenValidity: Duration.minutes(60),
       refreshTokenValidity: Duration.days(7),
+      authSessionValidity: Duration.minutes(15), // see the web client
       enableTokenRevocation: true,
       preventUserExistenceErrors: true,
     });
