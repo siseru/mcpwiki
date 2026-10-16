@@ -260,7 +260,7 @@ scripts      build / lint / smoke / create-admin / bootstrap-dev / diagrams
 docs         設計資料と図
 ```
 
-セキュリティ設計の詳細: [docs/security.md](docs/security.md) / 脆弱性の報告: [SECURITY.md](SECURITY.md)
+セキュリティ設計の詳細: [docs/security.md](docs/security.md) / 脆弱性の報告: [SECURITY.md](SECURITY.md) / 別のスタックで作る画面を足す（拡張、既定は OFF）: [docs/extensions.md](docs/extensions.md)
 
 ## ライセンス
 

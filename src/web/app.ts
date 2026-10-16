@@ -9,6 +9,7 @@ import { handleCallback, isSignedIn, loadConfig, login, logout } from './auth.js
 import { append, clear, fmtDate, h } from './dom.js';
 import { renderGraph } from './graph.js';
 import { renderMarkdown } from './markdown.js';
+import { articleSlots, configuredExtensions, extensionPage, hostBase, loadExtensions, newView } from './extensions.js';
 import { ACCEPT, deleteAttachment, FILE_PATH_RE, formatSize, hydrateAttachments, listAttachments, openAttachment, uploadAttachment, type AttachmentInfo } from './attachments.js';
 
 interface Me {
@@ -19,6 +20,8 @@ interface Me {
 
 let me: Me;
 let config: PublicConfig;
+/** Aborted when the next route renders (extensions close their connections with it). */
+let viewSignal: AbortSignal = new AbortController().signal;
 const main = () => document.getElementById('main')!;
 
 const READ_LABEL: Record<ReadScope, string> = { admin: '管理者のみ', owner: 'オーナーのみ', all: 'だれでも' };
@@ -74,6 +77,7 @@ function articleRow(a: ArticleSummary, extra?: Node) {
 
 async function render() {
   const el = main();
+  viewSignal = newView();
   clear(el);
   el.appendChild(h('p', { class: 'muted' }, '読み込み中…'));
   const path = decodeURI(location.pathname);
@@ -94,6 +98,7 @@ async function render() {
     else if ((m = /^\/wiki\/([a-z0-9-]+)\/history\/(\d+)$/.exec(path))) view = await articleView(m[1]!, Number(m[2]));
     else if ((m = /^\/wiki\/([a-z0-9-]+)\/graph$/.exec(path))) view = await graphView(m[1]!);
     else if (FILE_PATH_RE.test(path)) view = await attachmentView(path);
+    else if ((m = /^\/apps\/([a-z][a-z0-9-]{1,30})(\/.*)?$/.exec(path))) view = extensionPage(hostBase(me, navigate), m[1]!, m[2] ?? '/', viewSignal);
     else if (path === '/admin' || path.startsWith('/admin/')) view = await adminView(path);
     else view = h('div', null, h('h1', null, '404'), h('p', null, 'ページが見つかりません。'));
     clear(el);
@@ -274,6 +279,13 @@ async function articleView(id: string, version: number | undefined) {
     a.description ? h('p', { class: 'description' }, a.description) : null,
     actions,
     h('div', { class: 'markdown-body' }, markdown(a.body)),
+    isOld
+      ? null
+      : articleSlots(
+          hostBase(me, navigate),
+          { id, type: a.type, title: a.title, tags: a.tags, extra: a.extra ?? {}, canEdit: !!a.canEdit, ownerName: a.ownerName },
+          viewSignal,
+        ),
     isOld ? null : await attachmentsSection(id, a.canEdit),
     backlinks.items.length ? h('section', { class: 'backlinks' }, h('h2', null, 'この記事へのリンク'), h('ul', null, ...backlinks.items.map((b) => h('li', null, link(`/wiki/${b.id}`, b.title))))) : null,
   );
@@ -1038,6 +1050,11 @@ function sidebar() {
       nav('/wiki/help-wiki', 'MCPWiki の使い方'),
       nav('/wiki/help-markdown', 'Markdown の書き方'),
     )),
+    configuredExtensions().length
+      ? h('section', { class: 'side-section' }, h('h2', null, '拡張'), h('ul', { class: 'side-list' },
+          ...configuredExtensions().map((x) => h('li', null, h('a', { href: `/apps/${x.id}/`, 'data-ext': x.id }, x.id))),
+        ))
+      : null,
     h('section', { class: 'side-section' }, h('h2', null, '最近の更新'), sideRecent),
     h('section', { class: 'side-section' }, h('h2', null, 'タグ'), sideTags),
   ]);
@@ -1101,6 +1118,9 @@ async function boot() {
     return;
   }
   me = await api<Me>('GET', '/api/me');
+  loadExtensions(cfg.extensions, (id, title) => {
+    for (const a of document.querySelectorAll<HTMLAnchorElement>('#sidebar a[data-ext]')) if (a.dataset.ext === id) a.textContent = title;
+  });
   applySiteTitle();
   header();
   sidebar();

@@ -10,6 +10,7 @@ import { AwsSolutionsChecks } from 'cdk-nag';
 import type { IConstruct } from 'constructs';
 import { CiStack } from './ci-stack.js';
 import { EdgeStack, type DomainConfig } from './edge-stack.js';
+import { parseExtensions, validateExtensions } from './extensions.js';
 import { DEV_BOUNDARY_NAME, DEV_QUALIFIER, GuardStack } from './guard-stack.js';
 import { WikiStack } from './wiki-stack.js';
 
@@ -39,6 +40,17 @@ function loadDomains(): DomainsContext | undefined {
   return existsSync(file) ? (JSON.parse(readFileSync(file, 'utf8')) as DomainsContext) : undefined;
 }
 const domains = loadDomains();
+
+// Optional extensions (docs/extensions.md), kept out of git like the domains: -c extensions='<json>', the secret
+// MCPWIKI_EXTENSIONS, or config/extensions.local.json. { "dev": [...], "prod": [...] }; absent = none.
+function loadExtensions() {
+  const ctx = app.node.tryGetContext('extensions') as unknown;
+  if (ctx) return parseExtensions(ctx);
+  if (process.env.MCPWIKI_EXTENSIONS) return parseExtensions(process.env.MCPWIKI_EXTENSIONS);
+  const file = `${repoRoot}config/extensions.local.json`;
+  return existsSync(file) ? parseExtensions(readFileSync(file, 'utf8')) : {};
+}
+const extensions = loadExtensions();
 const domainFor = (env: 'dev' | 'prod'): DomainConfig | undefined => {
   const host = domains?.hosts?.[env];
   if (!domains || !host) return undefined;
@@ -96,6 +108,7 @@ for (const envName of ['dev', 'prod'] as const) {
     domain: domain && edge?.certificate ? { ...domain, certificate: edge.certificate } : undefined,
     crossRegionReferences: true,
     terminationProtection: envName === 'prod',
+    extensions: validateExtensions(extensions[envName], region),
     synthesizer,
     permissionsBoundary,
   });

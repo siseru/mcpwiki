@@ -130,3 +130,8 @@ button.small { padding: .1rem .5rem; font-size: .8rem; }
 table.grid tr.selected td { background: #ddf4ff; }
 .badge.verified { color: var(--ok); border-color: var(--ok); }
 .mine-toggle { display: inline-flex; align-items: center; gap: .3rem; font-size: .9rem; color: var(--muted); margin: 0 0 .6rem; cursor: pointer; }
+
+/* Extension slots (docs/extensions.md): invisible until the extension draws something. */
+.ext-slot:empty { display: none; }
+.ext-slot { margin: 1.5rem 0; }
+.ext-notice { font-size: 0.9em; }

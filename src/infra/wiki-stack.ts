@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import {
+  Annotations,
   Arn, CfnOutput, Duration, Fn, RemovalPolicy, Stack, type StackProps,
   aws_apigatewayv2 as apigw,
   aws_backup as backup,
@@ -26,6 +27,7 @@ import {
 } from 'aws-cdk-lib';
 import type { Construct } from 'constructs';
 import type { DomainConfig } from './edge-stack.js';
+import type { ExtensionConfig } from './extensions.js';
 import { acknowledge } from './nag.js';
 
 export const CLI_REDIRECT_URI = 'http://localhost:53682/callback';
@@ -38,6 +40,8 @@ export interface WikiStackProps extends StackProps {
   /** Custom domain; the certificate (us-east-1) must cover host and auth.<host>. */
   domain?: DomainConfig & { certificate: acm.ICertificate };
   alarmEmail?: string;
+  /** Validated extension bundles to serve under /ext/<id>/ (docs/extensions.md). Empty = none. */
+  extensions?: ExtensionConfig[];
 }
 
 export class WikiStack extends Stack {
@@ -306,13 +310,14 @@ export class WikiStack extends Stack {
         `function handler(event) { var r = event.request; ${canonical}r.headers['x-viewer-address'] = { value: event.viewer.ip }; return r; }`,
       ),
     });
+    const extensions = props.extensions ?? [];
     const csp = [
       "default-src 'self'",
       "script-src 'self'",
       "style-src 'self'",
       "img-src 'self' data: blob:", // no third-party images (no reader beacons); blob: = attachments fetched with auth
       // Attachments are uploaded to / downloaded from the content bucket with presigned URLs.
-      `connect-src 'self' ${cognitoUrl} https://${contentBucket.bucketRegionalDomainName}`,
+      `connect-src 'self' ${cognitoUrl} https://${contentBucket.bucketRegionalDomainName}${extensions.flatMap((x) => x.connectSrc).map((c) => ` ${c}`).join('')}`,
       "font-src 'self'",
       "object-src 'none'",
       "base-uri 'none'",
@@ -369,8 +374,37 @@ export class WikiStack extends Stack {
         functionAssociations: [{ function: spaRewrite, eventType: cf.FunctionEventType.VIEWER_REQUEST }],
         compress: true,
       },
-      additionalBehaviors: { '/api/*': apiBehavior, '/mcp': apiBehavior, '/.well-known/*': apiBehavior },
+      additionalBehaviors: {
+        '/api/*': apiBehavior,
+        '/mcp': apiBehavior,
+        '/.well-known/*': apiBehavior,
+        // Extension bundles, read from each extension's own bucket. The bucket belongs to the extension's stack,
+        // which grants this distribution (by ARN) read access; no CloudFormation reference links the stacks.
+        ...Object.fromEntries(
+          extensions.map((x) => {
+            const bucket = s3.Bucket.fromBucketAttributes(this, `ExtBucket-${x.id}`, {
+              bucketName: x.bucketRegionalDomainName.slice(0, x.bucketRegionalDomainName.lastIndexOf(`.s3.${this.region}.`)),
+              bucketRegionalDomainName: x.bucketRegionalDomainName,
+            });
+            const behavior: cf.BehaviorOptions = {
+              origin: origins.S3BucketOrigin.withOriginAccessControl(bucket, { originAccessLevels: [cf.AccessLevel.READ] }),
+              viewerProtocolPolicy: cf.ViewerProtocolPolicy.HTTPS_ONLY,
+              allowedMethods: cf.AllowedMethods.ALLOW_GET_HEAD,
+              cachePolicy: cf.CachePolicy.CACHING_OPTIMIZED,
+              responseHeadersPolicy: headers,
+              compress: true,
+            };
+            return [`/ext/${x.id}/*`, behavior];
+          }),
+        ),
+      },
     });
+    if (extensions.length) {
+      Annotations.of(distribution).acknowledgeWarning(
+        '@aws-cdk/aws-cloudfront-origins:updateImportedBucketPolicyOac',
+        "Extension buckets belong to the extension's stack, whose bucket policy grants this distribution read access.",
+      );
+    }
     const publicUrl = custom ? `https://${custom.host}` : `https://${distribution.distributionDomainName}`;
 
     // ---------------------------------------------------------------- dns + login domain
@@ -468,6 +502,10 @@ export class WikiStack extends Stack {
           cliClientId: cliClient.userPoolClientId,
           cliRedirectUri: CLI_REDIRECT_URI,
           issuer: `https://cognito-idp.${this.region}.amazonaws.com/${userPool.userPoolId}`,
+          // Only with extensions enabled: without them config.json stays byte-identical.
+          ...(extensions.length
+            ? { extensions: extensions.map((x) => ({ id: x.id, contract: x.contract, src: `/ext/${x.id}/${x.script}`, integrity: x.integrity })) }
+            : {}),
         }),
       ],
       destinationBucket: webBucket,
