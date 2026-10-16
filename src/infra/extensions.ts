@@ -22,6 +22,7 @@ export interface ExtensionConfig {
 export type ExtensionsByEnv = Partial<Record<'dev' | 'prod', ExtensionConfig[]>>;
 
 const ID = /^[a-z][a-z0-9-]{1,30}$/;
+const BUCKET = /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/;
 const SCRIPT = /^[A-Za-z0-9._-]{1,100}\.js$/;
 const INTEGRITY = /^sha(384|512)-[A-Za-z0-9+/]{43,88}={0,2}$/;
 const LABEL = '(?!-)[a-z0-9-]{1,63}(?<!-)';
@@ -35,7 +36,9 @@ const MAX_CONNECT_SRC = 4;
 export function validateExtensions(raw: unknown, region: string): ExtensionConfig[] {
   if (raw === undefined || raw === null) return [];
   if (!Array.isArray(raw)) throw new Error('extensions: expected an array per environment');
-  const bucketDomain = new RegExp(`^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]\\.s3\\.${region.replace(/-/g, '\\-')}\\.amazonaws\\.com$`);
+  // No regular expression is built from the region: compare the suffix as a plain string.
+  const bucketSuffix = `.s3.${region}.amazonaws.com`;
+  const isBucketDomain = (d: string) => d.endsWith(bucketSuffix) && BUCKET.test(d.slice(0, -bucketSuffix.length));
   const seen = new Set<string>();
   return raw.map((e: unknown, i: number) => {
     const at = `extensions[${i}]`;
@@ -49,7 +52,7 @@ export function validateExtensions(raw: unknown, region: string): ExtensionConfi
     if (typeof x.contract !== 'number' || !EXTENSION_CONTRACTS.includes(x.contract)) {
       throw new Error(`${at} (${x.id}): unsupported contract ${String(x.contract)} (supported: ${EXTENSION_CONTRACTS.join(', ')})`);
     }
-    if (typeof x.bucketRegionalDomainName !== 'string' || !bucketDomain.test(x.bucketRegionalDomainName)) {
+    if (typeof x.bucketRegionalDomainName !== 'string' || !isBucketDomain(x.bucketRegionalDomainName)) {
       throw new Error(`${at} (${x.id}): bucketRegionalDomainName must be <bucket>.s3.${region}.amazonaws.com`);
     }
     if (typeof x.script !== 'string' || !SCRIPT.test(x.script)) throw new Error(`${at} (${x.id}): invalid script file name`);
