@@ -167,6 +167,7 @@ Create `dev` and `prod` under Settings → Environments:
 gh secret set AWS_ACCOUNT_ID -R $REPO --body "$ACCOUNT"
 gh secret set MCPWIKI_DOMAINS -R $REPO < <(node -e 'process.stdout.write(JSON.stringify(require("./config/domains.local.json")))')   # optional
 gh secret set MCPWIKI_ALARM_EMAIL -R $REPO --body ops@example.com                                                                  # optional (synth warns if prod has none)
+gh secret set MCPWIKI_EXTENSIONS -R $REPO < <(node -e 'process.stdout.write(JSON.stringify(require("./config/extensions.local.json")))')  # optional (docs/extensions.en.md)
 
 # Environment secrets
 gh secret set AWS_DEPLOY_ROLE_ARN --env dev  -R $REPO --body <DeployRoleArndev>

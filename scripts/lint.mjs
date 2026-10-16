@@ -92,7 +92,7 @@ for (const job of deployJobs.split(/\n(?=  \w[\w-]*:\n)/)) {
 // can be registered, and only secrets are redacted there (a vars.* value would appear in public logs).
 for (const f of readdirSync(wfDir).filter((f) => /\.ya?ml$/.test(f))) {
   readFileSync(join(wfDir, f), 'utf8').split('\n').forEach((line, i) => {
-    const m = /vars\.(AWS_ACCOUNT_ID|MCPWIKI_DOMAINS|MCPWIKI_ALARM_EMAIL|AWS_DEPLOY_ROLE_ARN|DEV_URL)\b/.exec(line);
+    const m = /vars\.(AWS_ACCOUNT_ID|MCPWIKI_DOMAINS|MCPWIKI_ALARM_EMAIL|MCPWIKI_EXTENSIONS|AWS_DEPLOY_ROLE_ARN|DEV_URL)\b/.exec(line);
     if (m) violations.push(`.github/workflows/${f}:${i + 1}: use secrets.${m[1]} (vars are printed unmasked in public logs)`);
   });
 }

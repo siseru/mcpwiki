@@ -83,6 +83,17 @@ English | [日本語](security.md)
 - **External images** are blocked by the CSP, so they can't be used to track readers.
 - **Security headers:** HSTS, `X-Content-Type-Options`, `X-Frame-Options: DENY`, `Referrer-Policy`, `Permissions-Policy` and COOP.
 
+## Extensions
+
+Extension bundles ([docs/extensions.en.md](extensions.en.md)) run in the wiki's origin. They can read the user's token and do anything the user (admins included) can do. Extensions are off by default.
+
+- **Only approved versions run:** the browser runs a bundle only if it matches the SRI hash in `config.json`, which comes from this wiki's secret `MCPWIKI_EXTENSIONS`. A compromised extension pipeline that rewrites the bundle in its bucket gets nothing to run. A new version needs a deployment of this wiki (two approvals for prod).
+- **Only endpoints are widened:** the CSP keeps `script-src 'self'`; `connect-src` gains the configured host names only. Values are validated at synthesis: paths, wildcards, IP addresses and CSP separators are rejected.
+- **Bucket:** the extension's stack owns its bucket and grants read access to this wiki's distribution ARN only. CloudFront accepts GET and HEAD only.
+- **Failure isolation:** an extension that fails to load, targets another contract version or throws does not stop the wiki.
+- **Logs:** bucket domains and endpoints are masked / redacted in CI logs.
+- **Removal:** delete the entry and redeploy; the templates return to what they were (checked by tests).
+
 ## MCP / LLM-specific threats
 
 | Threat | Mitigation |

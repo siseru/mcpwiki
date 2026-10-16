@@ -173,6 +173,20 @@ export interface PublicConfig {
   cliClientId: string;
   cliRedirectUri: string;
   issuer: string;
+  /** Present only when at least one extension is enabled (docs/extensions.md). */
+  extensions?: PublicExtension[];
+}
+
+/** Host API contract versions this wiki can host (docs/extensions.md). */
+export const EXTENSION_CONTRACTS: readonly number[] = [1];
+
+/** What the browser learns about an enabled extension. */
+export interface PublicExtension {
+  id: string;
+  contract: number;
+  /** Same-origin bundle path: /ext/<id>/<file>.js */
+  src: string;
+  integrity: string;
 }
 
 /** File attached to an article. Access follows the article's read/write scopes. */

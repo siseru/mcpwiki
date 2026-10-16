@@ -34,6 +34,22 @@ function growth(fn: (s: string) => unknown, unit: string, n: number): { ratio: n
   return { ratio: large < GROWTH_FLOOR_MS ? null : large / Math.max(small, 0.01), small, large };
 }
 
+/**
+ * Measures up to `attempts` times and stops at the first measurement that has the expected class. A busy runner
+ * (Windows, mostly) occasionally distorts one measurement (once 6x instead of ~16x for the quadratic control), but
+ * real behaviour is the same on every attempt: genuinely super-linear code fails all of them.
+ */
+function growthExpect(fn: (s: string) => unknown, unit: string, n: number, expected: 'linear' | 'super-linear', attempts = 3) {
+  let g = growth(fn, unit, n);
+  const ok = () => (expected === 'linear' ? g.ratio === null || g.ratio < GROWTH_LIMIT : g.ratio !== null && g.ratio >= GROWTH_LIMIT);
+  let tries = 1;
+  while (!ok() && tries < attempts) {
+    g = growth(fn, unit, n);
+    tries++;
+  }
+  return { ...g, ok: ok(), tries };
+}
+
 test('growth measurement tells linear from quadratic (self-check)', () => {
   // Local 32-bit accumulators: a shared counter that outgrows V8's small integers slows every later operation
   // down and makes even the linear control look super-linear.
@@ -48,12 +64,12 @@ test('growth measurement tells linear from quadratic (self-check)', () => {
     for (let i = 0; i < s.length; i++) for (let j = 0; j < i; j++) acc = (acc + (s.charCodeAt(j) & 1)) | 0;
     sink ^= acc;
   };
-  const lin = growth((s) => {
+  const lin = growthExpect((s) => {
     for (let k = 0; k < 40; k++) linear(s);
-  }, 'ab', 400_000);
-  const quad = growth(quadratic, 'ab', 4_000);
-  assert.ok(lin.ratio === null || lin.ratio < GROWTH_LIMIT, `linear misclassified: ${JSON.stringify(lin)}`);
-  assert.ok(quad.ratio !== null && quad.ratio >= GROWTH_LIMIT, `quadratic misclassified: ${JSON.stringify(quad)}`);
+  }, 'ab', 400_000, 'linear');
+  const quad = growthExpect(quadratic, 'ab', 4_000, 'super-linear');
+  assert.ok(lin.ok, `linear misclassified: ${JSON.stringify(lin)}`);
+  assert.ok(quad.ok, `quadratic misclassified: ${JSON.stringify(quad)}`);
   assert.ok(Number.isInteger(sink)); // keep the loops from being optimized away
 });
 
@@ -66,9 +82,9 @@ test('markdown helpers are linear on adversarial input (ReDoS)', { timeout: 60_0
   const inputs: [string, number][] = [['<', 250_000], ['[\n', 120_000], ['[a](', 60_000], ['```\n', 60_000], ['![x](', 50_000]];
   for (const [unit, n] of inputs) {
     for (const [name, fn] of Object.entries(helpers)) {
-      const g = growth(fn, unit, n);
-      const at = `${name} on ${JSON.stringify(unit)} x ${n}: ${g.small.toFixed(1)} ms -> ${g.large.toFixed(1)} ms`;
-      assert.ok(g.ratio === null || g.ratio < GROWTH_LIMIT, `super-linear growth (x${g.ratio?.toFixed(1)} for 4x input), ${at}`);
+      const g = growthExpect(fn, unit, n, 'linear');
+      const at = `${name} on ${JSON.stringify(unit)} x ${n}: ${g.small.toFixed(1)} ms -> ${g.large.toFixed(1)} ms (${g.tries} measurement(s))`;
+      assert.ok(g.ok, `super-linear growth (x${g.ratio?.toFixed(1)} for 4x input), ${at}`);
     }
   }
 });

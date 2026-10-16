@@ -167,6 +167,7 @@ GitHub の Settings → Environments で `dev` と `prod` を作ります。
 gh secret set AWS_ACCOUNT_ID -R $REPO --body "$ACCOUNT"
 gh secret set MCPWIKI_DOMAINS -R $REPO < <(node -e 'process.stdout.write(JSON.stringify(require("./config/domains.local.json")))')   # 任意
 gh secret set MCPWIKI_ALARM_EMAIL -R $REPO --body ops@example.com                                                                  # 任意（prod で未設定だと synth が警告）
+gh secret set MCPWIKI_EXTENSIONS -R $REPO < <(node -e 'process.stdout.write(JSON.stringify(require("./config/extensions.local.json")))')  # 任意（docs/extensions.md）
 
 # Environment のシークレット
 gh secret set AWS_DEPLOY_ROLE_ARN --env dev  -R $REPO --body <DeployRoleArndev>

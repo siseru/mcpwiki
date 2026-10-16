@@ -262,7 +262,7 @@ scripts      build / lint / smoke / create-admin / bootstrap-dev / diagrams
 docs         design documents and diagrams
 ```
 
-Security design: [docs/security.en.md](docs/security.en.md) / reporting vulnerabilities: [SECURITY.md](SECURITY.md)
+Security design: [docs/security.en.md](docs/security.en.md) / reporting vulnerabilities: [SECURITY.md](SECURITY.md) / adding UI from a separate stack (extensions, off by default): [docs/extensions.en.md](docs/extensions.en.md)
 
 ## License
 

@@ -37,6 +37,7 @@ jobs:
       CDK_DEFAULT_REGION: ${{ vars.AWS_REGION }}
       MCPWIKI_DOMAINS: ${{ secrets.MCPWIKI_DOMAINS }}
       MCPWIKI_ALARM_EMAIL: ${{ secrets.MCPWIKI_ALARM_EMAIL }}
+      MCPWIKI_EXTENSIONS: ${{ secrets.MCPWIKI_EXTENSIONS }} # optional (docs/extensions.md)
     steps:
       - id: env
         run: echo "env=${{ startsWith(github.ref, 'refs/tags/v') && 'prod' || 'dev' }}" >> "$GITHUB_OUTPUT"
@@ -92,6 +93,7 @@ jobs:
       AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
       MCPWIKI_DOMAINS: ${{ secrets.MCPWIKI_DOMAINS }}
       MCPWIKI_ALARM_EMAIL: ${{ secrets.MCPWIKI_ALARM_EMAIL }} # masked / redacted only (the assembly is pre-synthesized)
+      MCPWIKI_EXTENSIONS: ${{ secrets.MCPWIKI_EXTENSIONS }} # masked / redacted only
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

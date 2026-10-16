@@ -1,0 +1,13 @@
+{
+  "dev": [
+    {
+      "id": "example-ext",
+      "contract": 1,
+      "bucketRegionalDomainName": "example-ext-bundles.s3.us-west-2.amazonaws.com",
+      "script": "example-ext-0123abcd.js",
+      "integrity": "sha384-oqVuAfXRKap7fdgcCY5uykM6+R9GqQ8K/uxy9rx7HNQlGYl1kPzQho1wx4JwY8wC",
+      "connectSrc": ["wss://example.execute-api.us-west-2.amazonaws.com"]
+    }
+  ],
+  "prod": []
+}

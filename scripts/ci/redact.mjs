@@ -6,7 +6,7 @@
 //   <cmd> 2>&1 | node scripts/ci/redact.mjs    copy stdin to stdout with known values and AWS ids replaced
 // (Masks for the runner are registered by scripts/ci/mask.sh.)
 //
-// Known values come from AWS_ACCOUNT_ID, MCPWIKI_DOMAINS (the same variables the deploy uses) and REDACT_EXTRA.
+// Known values come from AWS_ACCOUNT_ID, MCPWIKI_DOMAINS, MCPWIKI_EXTENSIONS (the same variables the deploy uses) and REDACT_EXTRA.
 import { createInterface } from 'node:readline';
 
 const values = new Set();
@@ -37,6 +37,20 @@ try {
   }
 } catch {
   console.error('redact: MCPWIKI_DOMAINS is not valid JSON; only generic patterns are applied');
+}
+
+// Extensions (docs/extensions.md): bucket domains / names and connect-src hosts.
+try {
+  const x = JSON.parse(process.env.MCPWIKI_EXTENSIONS || 'null');
+  for (const list of Object.values(x ?? {})) {
+    for (const e of Array.isArray(list) ? list : []) {
+      add(e?.bucketRegionalDomainName);
+      if (typeof e?.bucketRegionalDomainName === 'string') add(e.bucketRegionalDomainName.split('.s3.')[0]);
+      for (const c of Array.isArray(e?.connectSrc) ? e.connectSrc : []) if (typeof c === 'string') add(c.replace(/^[a-z]+:\/\//, ''));
+    }
+  }
+} catch {
+  console.error('redact: MCPWIKI_EXTENSIONS is not valid JSON; only generic patterns are applied');
 }
 
 // Identifiers created at deploy time (not known in advance). Each log line is split into tokens and every
