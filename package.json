@@ -27,7 +27,7 @@
     "deploy:prod": "npm run build && cdk deploy MCPWiki-prod-edge MCPWiki-prod"
   },
   "dependencies": {
-    "dompurify": "3.4.16",
+    "dompurify": "3.4.17",
     "marked": "18.1.0"
   },
   "devDependencies": {
