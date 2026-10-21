@@ -38,7 +38,7 @@
     "@aws-sdk/client-sns": "^3.1147.0",
     "@aws-sdk/client-ssm": "^3.1147.0",
     "@aws-sdk/lib-dynamodb": "^3.1147.0",
-    "@types/node": "^24.19.1",
+    "@types/node": "^24.19.2",
     "aws-cdk": "^2.1145.0",
     "aws-cdk-lib": "^2.273.0",
     "cdk-nag": "^3.0.2",
