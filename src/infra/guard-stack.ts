@@ -117,13 +117,15 @@ export class GuardStack extends Stack {
       }),
       // CloudFront functions and policies cannot carry tags, so the tag denies above never match them (prod's
       // viewer-request functions and security headers would be writable). Functions are named after their
-      // stack (`<region>MCPWikidev...`); the other types are addressed by generated ids, so updates are denied
-      // outright: the wiki names its response headers policies after their content, making changes replacements
-      // (create + delete; CloudFront refuses to delete a policy still attached to prod's distribution).
+      // stack (`<region>MCPWikidev...`); CreateFunction is authorized against `*` and stays allowed (a new
+      // function does nothing until attached to a distribution, which is tagged). The other types are addressed
+      // by generated ids, so updates are denied outright: the wiki puts a content hash into the logical id of its
+      // response headers policies, making changes replacements (create + delete; CloudFront refuses to delete
+      // a policy still attached to prod's distribution).
       new iam.PolicyStatement({
         sid: 'DenyCloudFrontFunctionsOutsideDev',
         effect: iam.Effect.DENY,
-        actions: ['cloudfront:CreateFunction', 'cloudfront:UpdateFunction', 'cloudfront:PublishFunction', 'cloudfront:DeleteFunction'],
+        actions: ['cloudfront:UpdateFunction', 'cloudfront:PublishFunction', 'cloudfront:DeleteFunction'],
         notResources: [`arn:aws:cloudfront::${a}:function/*MCPWikidev*`],
       }),
       new iam.PolicyStatement({

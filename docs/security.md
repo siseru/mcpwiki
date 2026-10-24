@@ -91,7 +91,7 @@ dev と prod を同じアカウントに置く場合、既定の CDK bootstrap �
    - AssumeRole は dev のロールと `cdk-mwdev-*` だけ（既定の bootstrap ロールへの昇格を遮断）
    - 他の CloudFormation スタックに属するリソースと、`mcpwiki:env=prod` タグの付いたリソースへの操作を拒否
    - prod のデータ（S3、DynamoDB、Lambda、SSM、ログ、Backup）と、既定の CDK アセットバケットを、名前でも拒否
-   - CloudFront の関数とポリシーはタグを付けられないので、上のタグによる拒否が効きません。関数の変更は dev の名前（`*MCPWikidev*`）だけに限り、ポリシー（レスポンスヘッダ、キャッシュ、OAC など）のその場の更新は一律に拒否します。Wiki のレスポンスヘッダポリシーは内容のハッシュを名前に含めるので、変更は作り直し（作成と削除）になります。prod の配信に付いているポリシーは、CloudFront が削除を拒否します
+   - CloudFront の関数とポリシーはタグを付けられないので、上のタグによる拒否が効きません。関数の変更は dev の名前（`*MCPWikidev*`）だけに限り、ポリシー（レスポンスヘッダ、キャッシュ、OAC など）のその場の更新は一律に拒否します。Wiki のレスポンスヘッダポリシーは内容のハッシュを論理 ID に含めるので、変更は作り直し（作成と削除）になります（CloudFormation は名前を変えただけではその場で更新します）。prod の配信に付いているポリシーは、CloudFront が削除を拒否します
    - Route 53 の変更は dev のホスト名配下だけ（同じゾーンにある他のサイトを守る）
 4. **GitHub OIDC**: dev のロールは `environment:dev` かつ `ref:refs/heads/main` のときだけ引き受けられ、`cdk-mwdev-*` しか AssumeRole できません。prod のロールは `environment:prod` かつ `ref:refs/tags/v*` に限り、GitHub の承認も必要です。
 
@@ -144,7 +144,7 @@ IAM Policy Simulator で確認済みの結果: 境界下のロールからの pr
 | Medium | 多要素認証が TOTP だけで、偽のログイン画面に弱い | 対応済み（パスキー。ユーザ検証を必須とし、MFA を満たす） |
 | Medium | アラームの通知先のアドレスが、記号を除いた形で dev の公開デプロイログに出た（CDK の `EmailSubscription` がアドレスから論理 ID を作るため。GitHub のマスクは元の形にしか効かない） | 対応済み（該当の実行のログを削除、固定の ID に変更、lint と CI の検査、記号を除いた形もマスク）。prod には出ていません |
 | Low | テストのコードに bidi 制御文字が直書きされていた | 対応済み（エスケープに置換し、lint で禁止） |
-| Medium | dev の boundary が、タグを付けられない CloudFront の関数とポリシーを守れず、dev から prod の viewer-request 関数とセキュリティヘッダを書き換えられた | 対応済み（関数は dev の名前に限定、ポリシーの更新を拒否し、ヘッダポリシーは内容で命名） |
+| Medium | dev の boundary が、タグを付けられない CloudFront の関数とポリシーを守れず、dev から prod の viewer-request 関数とセキュリティヘッダを書き換えられた | 対応済み（関数は dev の名前に限定、ポリシーの更新を拒否し、ヘッダポリシーは内容のハッシュで作り直す） |
 | Medium | 拡張のバケットの任意のファイルが Wiki のオリジンで配信され、SRI を通さずにスクリプトを実行できた | 対応済み（設定した `script` だけを配信し、sandbox の CSP を付ける） |
 | Low | 添付の署名付きアップロードを再利用すると、形式の確認後に中身を差し替えられた | 対応済み（確認した版に配信を固定） |
 | Low（受容） | WAF の本文ルールの一部が count のまま | 記事の本文に HTML やコード例が入るため。描画時の無害化と CSP で補っています |

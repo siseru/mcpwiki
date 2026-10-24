@@ -107,11 +107,14 @@ test('an extension adds only its CloudFront behavior (with OAC), its connect-src
   const on = synth([valid()]);
   const added = Object.keys(on.resources).filter((k) => !(k in off.resources));
   const removed = Object.keys(off.resources).filter((k) => !(k in on.resources));
-  assert.deepEqual(removed, []);
-  assert.deepEqual(added.map((k) => on.resources[k]!.Type).sort(), ['AWS::CloudFront::OriginAccessControl', 'AWS::CloudFront::ResponseHeadersPolicy']);
-  const changed = Object.keys(off.resources).filter((k) => JSON.stringify(off.resources[k]) !== JSON.stringify(on.resources[k]));
-  // The distribution (behavior + origin), the security headers (CSP) and the root deployment (new config.json asset).
-  assert.deepEqual(changed.map((k) => on.resources[k]!.Type).sort(), ['AWS::CloudFront::Distribution', 'AWS::CloudFront::ResponseHeadersPolicy', 'Custom::CDKBucketDeployment']);
+  // The security headers (CSP) are replaced, not updated: their logical id carries a content hash.
+  assert.deepEqual(removed.map((k) => off.resources[k]!.Type), ['AWS::CloudFront::ResponseHeadersPolicy']);
+  assert.deepEqual(added.map((k) => on.resources[k]!.Type).sort(), [
+    'AWS::CloudFront::OriginAccessControl', 'AWS::CloudFront::ResponseHeadersPolicy', 'AWS::CloudFront::ResponseHeadersPolicy',
+  ]);
+  const changed = Object.keys(off.resources).filter((k) => k in on.resources && JSON.stringify(off.resources[k]) !== JSON.stringify(on.resources[k]));
+  // The distribution (behavior + origin, new headers policy) and the root deployment (new config.json asset).
+  assert.deepEqual(changed.map((k) => on.resources[k]!.Type).sort(), ['AWS::CloudFront::Distribution', 'Custom::CDKBucketDeployment']);
   const ext = behaviors(on.resources).find((b) => b.PathPattern === '/ext/demo-ext/demo-ext-0123abcd.js')!;
   assert.deepEqual(ext.AllowedMethods, ['GET', 'HEAD']);
   assert.ok(csp(on.resources).includes(' wss://abcdefghij.execute-api.us-west-2.amazonaws.com;'));
@@ -135,15 +138,17 @@ test('only the approved bundle is served from the extension bucket, never as a p
   assert.ok(cspOf(extPolicy).includes("default-src 'none'; sandbox"));
 });
 
-test('response headers policies are named after their content, so changes replace them (dev may not update policies)', () => {
-  const name = (r: ReturnType<typeof synth>['resources'], prefix: string) =>
-    headerPolicies(r).find(([k]) => k.startsWith(prefix))![1].Properties.ResponseHeadersPolicyConfig.Name as string;
+test('response headers policies are replaced on every change, never updated in place (dev may not update policies)', () => {
+  // CloudFormation updates a policy in place unless its logical id changes; the id carries a content hash.
+  const key = (r: ReturnType<typeof synth>['resources'], prefix: string) => headerPolicies(r).find(([k]) => k.startsWith(prefix))![0];
   const off = synth([]);
   const on = synth([valid()]);
   const other = synth([{ ...valid(), connectSrc: ['wss://klmnopqrst.execute-api.us-west-2.amazonaws.com'] }]);
-  assert.match(name(off.resources, 'SecurityHeaders'), /^[A-Za-z0-9_-]{1,100}-[0-9a-f]{16}$/);
-  assert.notEqual(name(on.resources, 'SecurityHeaders'), name(off.resources, 'SecurityHeaders'));
-  assert.notEqual(name(other.resources, 'SecurityHeaders'), name(on.resources, 'SecurityHeaders'));
-  assert.equal(name(other.resources, 'ExtensionHeaders'), name(on.resources, 'ExtensionHeaders'));
-  assert.equal(name(synth([]).resources, 'SecurityHeaders'), name(off.resources, 'SecurityHeaders'));
+  assert.notEqual(key(on.resources, 'SecurityHeaders'), key(off.resources, 'SecurityHeaders'));
+  assert.notEqual(key(other.resources, 'SecurityHeaders'), key(on.resources, 'SecurityHeaders'));
+  assert.equal(key(other.resources, 'ExtensionHeaders'), key(on.resources, 'ExtensionHeaders'));
+  assert.equal(key(synth([]).resources, 'SecurityHeaders'), key(off.resources, 'SecurityHeaders'), 'stable for unchanged content');
+  // Generated names follow the logical id, so old and new policy can coexist during the replacement.
+  const name = (r: ReturnType<typeof synth>['resources']) => headerPolicies(r).find(([k]) => k.startsWith('SecurityHeaders'))![1].Properties.ResponseHeadersPolicyConfig.Name;
+  assert.notEqual(name(on.resources), name(off.resources));
 });
