@@ -115,6 +115,29 @@ export class GuardStack extends Stack {
           `arn:aws:backup:*:${a}:backup-vault:mcpwiki-prod`,
         ],
       }),
+      // CloudFront functions and policies cannot carry tags, so the tag denies above never match them (prod's
+      // viewer-request functions and security headers would be writable). Functions are named after their
+      // stack (`<region>MCPWikidev...`); the other types are addressed by generated ids, so updates are denied
+      // outright: the wiki names its response headers policies after their content, making changes replacements
+      // (create + delete; CloudFront refuses to delete a policy still attached to prod's distribution).
+      new iam.PolicyStatement({
+        sid: 'DenyCloudFrontFunctionsOutsideDev',
+        effect: iam.Effect.DENY,
+        actions: ['cloudfront:CreateFunction', 'cloudfront:UpdateFunction', 'cloudfront:PublishFunction', 'cloudfront:DeleteFunction'],
+        notResources: [`arn:aws:cloudfront::${a}:function/*MCPWikidev*`],
+      }),
+      new iam.PolicyStatement({
+        sid: 'DenyUntaggableCloudFrontUpdates',
+        effect: iam.Effect.DENY,
+        actions: [
+          'cloudfront:UpdateResponseHeadersPolicy', 'cloudfront:UpdateCachePolicy', 'cloudfront:UpdateOriginRequestPolicy',
+          'cloudfront:UpdateOriginAccessControl', 'cloudfront:UpdateCloudFrontOriginAccessIdentity', 'cloudfront:UpdateKeyGroup',
+          'cloudfront:UpdatePublicKey', 'cloudfront:UpdateKeyValueStore', 'cloudfront:UpdateRealtimeLogConfig',
+          'cloudfront:UpdateFieldLevelEncryptionConfig', 'cloudfront:UpdateFieldLevelEncryptionProfile',
+          'cloudfront:UpdateContinuousDeploymentPolicy',
+        ],
+        resources: ['*'],
+      }),
       // The default bootstrap version parameter may be read (CloudFormation re-resolves previous parameter
       // values during updates) but never changed.
       new iam.PolicyStatement({

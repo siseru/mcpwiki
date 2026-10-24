@@ -117,7 +117,8 @@ export class AttachmentService {
       await this.wiki.auditEvent(p, 'attachment.rejected', articleId, `${fileId} ${a.contentType}`);
       throw badRequest('the uploaded file does not match its declared type or size');
     }
-    const ready: Attachment = { ...a, size: obj.size, status: 'ready' };
+    // Pin the checked version: the upload policy can be reused until it expires, replacing the object after this check.
+    const ready: Attachment = { ...a, size: obj.size, status: 'ready', versionId: obj.versionId };
     await this.store.putAttachment(ready);
     await this.wiki.auditEvent(p, 'attachment.upload', articleId, `${fileId} ${a.contentType} ${obj.size}B`);
     return view(ready);
@@ -141,7 +142,7 @@ export class AttachmentService {
     const a = await this.ready(p, articleId, fileId);
     const inline = ATTACHMENT_TYPES[a.contentType]?.inline ?? false;
     const disposition = `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(a.name)}`;
-    return { ...view(a), url: this.blobs.presignDownload(attachmentKey(articleId, fileId), a.contentType, disposition), expiresInSeconds: 300 };
+    return { ...view(a), url: this.blobs.presignDownload(attachmentKey(articleId, fileId), a.contentType, disposition, a.versionId), expiresInSeconds: 300 };
   }
 
   /** Image bytes for MCP clients (small images only). */
@@ -149,7 +150,7 @@ export class AttachmentService {
     const a = await this.ready(p, articleId, fileId);
     if (!ATTACHMENT_TYPES[a.contentType]?.inline) return { attachment: view(a), data: null as Buffer | null, reason: 'not an image' };
     if (a.size > MAX_MCP_IMAGE_BYTES) return { attachment: view(a), data: null as Buffer | null, reason: `larger than ${MAX_MCP_IMAGE_BYTES} bytes` };
-    return { attachment: view(a), data: await this.blobs.read(attachmentKey(articleId, fileId), MAX_MCP_IMAGE_BYTES), reason: '' };
+    return { attachment: view(a), data: await this.blobs.read(attachmentKey(articleId, fileId), MAX_MCP_IMAGE_BYTES, a.versionId), reason: '' };
   }
 
   async remove(p: Principal, articleId: string, fileId: string): Promise<void> {

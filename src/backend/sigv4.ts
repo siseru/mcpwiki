@@ -76,6 +76,7 @@ export function presignGet(o: {
   bucket: string;
   region: string;
   key: string;
+  versionId?: string;
   expiresSec: number;
   credentials: AwsCredentials;
   responseHeaders?: Record<string, string>; // e.g. { 'response-content-disposition': 'attachment' }
@@ -95,6 +96,7 @@ export function presignGet(o: {
     'X-Amz-SignedHeaders': 'host',
     ...(o.credentials.sessionToken ? { 'X-Amz-Security-Token': o.credentials.sessionToken } : {}),
     ...(o.responseHeaders ?? {}),
+    ...(o.versionId ? { versionId: o.versionId } : {}),
   };
   const query = Object.keys(q)
     .sort()

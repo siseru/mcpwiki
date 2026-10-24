@@ -63,7 +63,7 @@ English | [日本語](security.md)
 | Threat | Mitigation |
 |---|---|
 | Unauthorized viewing | Attachments follow the article's `readScope`; attachments of unreadable articles return 404. No cookies are used: the SPA fetches a presigned URL (valid for 5 minutes) with its token and shows the file through a `blob:` URL. |
-| XSS through script-bearing files (SVG, HTML) | Only PNG, JPEG, GIF, WebP and PDF are allowed. After upload, magic bytes are checked against the declared type and mismatches are discarded. Downloads have a fixed `Content-Type`, and PDFs are always served as `attachment`. |
+| XSS through script-bearing files (SVG, HTML) | Only PNG, JPEG, GIF, WebP and PDF are allowed. After upload, magic bytes are checked against the declared type and mismatches are discarded. The presigned upload stays usable until it expires, so downloads and MCP reads are pinned to the checked S3 version. Downloads have a fixed `Content-Type`, and PDFs are always served as `attachment`. |
 | Oversized files / overwriting other objects | The presigned POST policy pins the key, the `Content-Type` and the declared size (up to 10 MB). There is a limit of 100 files per article, and write rate limits apply. |
 | Hijacking someone else's upload | Only the user who started an upload can complete it. |
 | Malicious file names | Paths, control characters, bidi characters and quotes are stripped from display names. The CLI never uses a server-provided name as a path. |
@@ -87,7 +87,7 @@ English | [日本語](security.md)
 
 Extension bundles ([docs/extensions.en.md](extensions.en.md)) run in the wiki's origin. They can read the user's token and do anything the user (admins included) can do. Extensions are off by default.
 
-- **Only approved versions run:** the browser runs a bundle only if it matches the SRI hash in `config.json`, which comes from this wiki's secret `MCPWIKI_EXTENSIONS`. A compromised extension pipeline that rewrites the bundle in its bucket gets nothing to run. A new version needs a deployment of this wiki (two approvals for prod).
+- **Only approved versions run:** the browser runs a bundle only if it matches the SRI hash in `config.json`, which comes from this wiki's secret `MCPWIKI_EXTENSIONS`. A compromised extension pipeline that rewrites the bundle in its bucket gets nothing to run. CloudFront serves only the configured `script` file from the extension's bucket (other objects in the bucket are not reachable through the wiki's origin), with a `default-src 'none'; sandbox` CSP, so it cannot run as a page even if opened as HTML. A new version needs a deployment of this wiki (two approvals for prod).
 - **Only endpoints are widened:** the CSP keeps `script-src 'self'`; `connect-src` gains the configured host names only. Values are validated at synthesis: paths, wildcards, IP addresses and CSP separators are rejected.
 - **Bucket:** the extension's stack owns its bucket and grants read access to this wiki's distribution ARN only. CloudFront accepts GET and HEAD only.
 - **Failure isolation:** an extension that fails to load, targets another contract version or throws does not stop the wiki.
@@ -149,6 +149,7 @@ The default CDK bootstrap is unsafe when dev and prod share one account. Its exe
    - AssumeRole is allowed only for dev roles and `cdk-mwdev-*`. This blocks escalation through the default bootstrap roles, which trust the account root.
    - Resources that belong to other CloudFormation stacks, or that are tagged `mcpwiki:env=prod`, are denied.
    - prod data (S3, DynamoDB, Lambda, SSM, logs, Backup) and the default CDK asset bucket are also denied by name.
+   - CloudFront functions and policies cannot be tagged, so the tag denies above never match them. Function changes are allowed only for dev's names (`*MCPWikidev*`), and in-place updates of policies (response headers, cache, OAC, ...) are denied outright. The wiki names its response headers policies after their content, so a change is a replacement (create + delete); CloudFront refuses to delete a policy still attached to prod's distribution.
    - Route 53 changes are allowed only for the dev host and names under it. This protects the other sites that share the hosted zone.
 4. **GitHub OIDC trust:**
    - The dev role requires `environment:dev` and `ref:refs/heads/main`, and it can assume only `cdk-mwdev-*`.
@@ -164,7 +165,7 @@ Verified with the IAM policy simulator. A role under the boundary is denied when
 - touch resources owned by another stack
 - change DNS records outside the dev host
 
-Operations on dev's own resources are allowed.
+Operations on dev's own resources are allowed. The CloudFront function and policy denies (added in the second 2026-10 review) are checked against the synthesized templates by `test/guard.test.ts`; verify them on the deployed boundary with the IAM policy simulator as well.
 
 **Residual risk:** resources that weren't created by CloudFormation and that match no naming or tag rule (for example, resources created by hand) aren't covered by the deny statements. Use separate accounts for complete isolation.
 
@@ -219,6 +220,9 @@ The initial backfill found 12 packages published less than 7 days earlier. They 
 | Medium | TOTP was the only MFA method, which a look-alike login page can phish | Fixed: passkeys, with user verification required, satisfy MFA |
 | Medium | The alarm address appeared, with punctuation dropped, in a public dev deploy log. CDK's `EmailSubscription` builds the logical id from the address, and GitHub masks only the literal value. | Fixed: the run's logs were deleted, ids are fixed, lint and a CI check prevent a repeat, and the punctuation-free form is masked too. prod was not affected. |
 | Low | Test code contained literal bidi control characters | Fixed: replaced with escapes; lint rejects them |
+| Medium | The dev boundary did not cover CloudFront functions and policies (they cannot be tagged), so dev could rewrite prod's viewer-request functions and security headers | Fixed: functions limited to dev's names, policy updates denied, headers policies named after their content |
+| Medium | Any object in an extension's bucket was served from the wiki's origin and could run scripts without the SRI check | Fixed: only the configured `script` is served, with a sandbox CSP |
+| Low | Re-using an attachment's presigned upload could replace the bytes after the type check | Fixed: reads are pinned to the checked version |
 | Low (accepted) | Some WAF body rules stay in count mode | Article bodies legitimately contain HTML and code samples. Mitigated by sanitized rendering and the CSP. |
 
 ## Known limitations

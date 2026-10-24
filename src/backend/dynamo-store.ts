@@ -368,11 +368,12 @@ export class S3Blobs implements AttachmentBlobs {
     return presignPost({ bucket: this.bucket, region: this.region, key, contentType, maxBytes, expiresSec: 300, credentials: envCredentials() });
   }
 
-  presignDownload(key: string, contentType: string, disposition: string) {
+  presignDownload(key: string, contentType: string, disposition: string, versionId?: string) {
     return presignGet({
       bucket: this.bucket,
       region: this.region,
       key,
+      versionId,
       expiresSec: 300,
       credentials: envCredentials(),
       responseHeaders: { 'response-content-type': contentType, 'response-content-disposition': disposition, 'response-cache-control': 'private, max-age=300' },
@@ -384,15 +385,15 @@ export class S3Blobs implements AttachmentBlobs {
       const res = await this.s3.send(new GetObjectCommand({ Bucket: this.bucket, Key: key, Range: `bytes=0-${bytes - 1}` }));
       const head = Buffer.from((await res.Body?.transformToByteArray()) ?? []);
       const total = Number(/\/(\d+)$/.exec(res.ContentRange ?? '')?.[1] ?? res.ContentLength ?? head.length);
-      return { size: total, head };
+      return { size: total, head, versionId: res.VersionId };
     } catch (e) {
       if (e instanceof NoSuchKey || (e instanceof S3ServiceException && e.$metadata.httpStatusCode === 404)) return null;
       throw e;
     }
   }
 
-  async read(key: string, maxBytes: number) {
-    const res = await this.s3.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
+  async read(key: string, maxBytes: number, versionId?: string) {
+    const res = await this.s3.send(new GetObjectCommand({ Bucket: this.bucket, Key: key, VersionId: versionId }));
     if ((res.ContentLength ?? 0) > maxBytes) throw new Error('object too large');
     return Buffer.from((await res.Body?.transformToByteArray()) ?? []);
   }

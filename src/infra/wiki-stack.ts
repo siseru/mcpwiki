@@ -1,7 +1,8 @@
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import {
   Annotations,
-  Arn, CfnOutput, Duration, Fn, RemovalPolicy, Stack, type StackProps,
+  Arn, CfnOutput, Duration, Fn, Lazy, Names, RemovalPolicy, Stack, type StackProps,
   aws_apigatewayv2 as apigw,
   aws_backup as backup,
   aws_apigatewayv2_integrations as integrations,
@@ -232,7 +233,7 @@ export class WikiStack extends Stack {
     // deleted files (versioned bucket: a delete marker; earlier versions stay recoverable, no DeleteObjectVersion).
     fn.addToRolePolicy(
       new iam.PolicyStatement({
-        actions: ['s3:PutObject', 's3:GetObject', 's3:DeleteObject'],
+        actions: ['s3:PutObject', 's3:GetObject', 's3:GetObjectVersion', 's3:DeleteObject'],
         resources: [contentBucket.arnForObjects('attachments/*')],
       }),
     );
@@ -341,6 +342,20 @@ export class WikiStack extends Stack {
       },
       removeHeaders: ['Server'],
     });
+    nameAfterContent(headers);
+    // Extension bundles are only ever loaded as module scripts (the CSP of a script response does not apply to
+    // it). Should anything else be served from there, it must not run as a page of the wiki's origin.
+    const extHeaders = extensions.length ? new cf.ResponseHeadersPolicy(this, 'ExtensionHeaders', {
+      securityHeadersBehavior: {
+        contentSecurityPolicy: { contentSecurityPolicy: "default-src 'none'; sandbox; frame-ancestors 'none'", override: true },
+        strictTransportSecurity: { accessControlMaxAge: Duration.days(365), includeSubdomains: true, preload: false, override: true },
+        contentTypeOptions: { override: true },
+        frameOptions: { frameOption: cf.HeadersFrameOption.DENY, override: true },
+        referrerPolicy: { referrerPolicy: cf.HeadersReferrerPolicy.STRICT_ORIGIN_WHEN_CROSS_ORIGIN, override: true },
+      },
+      removeHeaders: ['Server'],
+    }) : undefined;
+    if (extHeaders) nameAfterContent(extHeaders);
     const apiOrigin = new origins.HttpOrigin(`${api.apiId}.execute-api.${this.region}.amazonaws.com`, {
       protocolPolicy: cf.OriginProtocolPolicy.HTTPS_ONLY,
       customHeaders: { 'x-origin-verify': originSecret.secretValue.unsafeUnwrap() },
@@ -391,10 +406,12 @@ export class WikiStack extends Stack {
               viewerProtocolPolicy: cf.ViewerProtocolPolicy.HTTPS_ONLY,
               allowedMethods: cf.AllowedMethods.ALLOW_GET_HEAD,
               cachePolicy: cf.CachePolicy.CACHING_OPTIMIZED,
-              responseHeadersPolicy: headers,
+              responseHeadersPolicy: extHeaders,
               compress: true,
             };
-            return [`/ext/${x.id}/*`, behavior];
+            // Only the approved bundle: anything else in the bucket must not be served from the wiki's origin,
+            // where it would run without the SRI check (e.g. an HTML page loading another script from there).
+            return [`/ext/${x.id}/${x.script}`, behavior];
           }),
         ),
       },
@@ -601,7 +618,7 @@ export class WikiStack extends Stack {
     acknowledge(this, [
       { id: 'AwsSolutions-IAM4[Policy::arn:<AWS::Partition>:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole]', reason: 'CloudWatch Logs only.' },
       { id: `AwsSolutions-IAM5[Resource::<${this.getLogicalId(contentBucket.node.defaultChild as s3.CfnBucket)}.Arn>/articles/*]`, reason: 'Article objects (put/get/get-version only, no delete).' },
-      { id: `AwsSolutions-IAM5[Resource::<${this.getLogicalId(contentBucket.node.defaultChild as s3.CfnBucket)}.Arn>/attachments/*]`, reason: 'Attachment objects: presigned upload/download and removal of rejected/deleted files (no version deletion).' },
+      { id: `AwsSolutions-IAM5[Resource::<${this.getLogicalId(contentBucket.node.defaultChild as s3.CfnBucket)}.Arn>/attachments/*]`, reason: 'Attachment objects: presigned upload/download (pinned to the checked version) and removal of rejected/deleted files (no version deletion).' },
       { id: `AwsSolutions-IAM5[Resource::<${this.getLogicalId(contentBucket.node.defaultChild as s3.CfnBucket)}.Arn>/exports/*]`, reason: 'Admin export archives: write once, presigned download; expired by a lifecycle rule after one day.' },
       { id: 'AwsSolutions-COG8', reason: 'Cognito Plus tier (threat protection) is not used for cost reasons; MFA is mandatory.' },
       { id: 'AwsSolutions-COG3', reason: 'Threat protection requires the Cognito Plus tier; MFA is mandatory and WAF rate limiting is applied in prod (cost trade-off).' },
@@ -618,4 +635,20 @@ export class WikiStack extends Stack {
       acknowledge(this, [{ id: 'AwsSolutions-CFR2', reason: 'WAF is enabled for prod only (cost); dev relies on API throttling and per-user rate limits.' }]);
     }
   }
+}
+
+/**
+ * Names a response headers policy after its content, so every change is a replacement instead of an in-place
+ * update. The dev boundary denies policy updates (CloudFront policies carry no tags, so prod's cannot be told
+ * apart; see guard-stack.ts). The hash covers the synthesized config, i.e. references stay references.
+ */
+function nameAfterContent(policy: cf.ResponseHeadersPolicy): void {
+  const cfn = policy.node.defaultChild as cf.CfnResponseHeadersPolicy;
+  const prefix = Names.uniqueResourceName(policy, { maxLength: 100 });
+  cfn.addPropertyOverride('ResponseHeadersPolicyConfig.Name', Lazy.string({
+    produce: () => {
+      const { name: _name, ...config } = Stack.of(policy).resolve(cfn.responseHeadersPolicyConfig) as Record<string, unknown>;
+      return `${prefix}-${createHash('sha256').update(JSON.stringify(config)).digest('hex').slice(0, 16)}`;
+    },
+  }));
 }
