@@ -74,10 +74,21 @@ function envName(flags: Flags): string {
 
 type Flags = Record<string, string | boolean>;
 
+const BOOLEANS = new Set(['json', 'mine', 'no-browser', 'raw', 'help', 'default', 'force']);
+/** Flags that are switches for some commands only and take a value elsewhere (`graph --tags` vs `create --tags a,b`). */
+const COMMAND_BOOLEANS: Record<string, string[]> = { graph: ['tags'] };
+/** Most positional arguments per command; the rest would be dropped silently (e.g. the value of a misparsed flag). */
+const MAX_ARGS: Record<string, number> = {
+  configure: 0, login: 0, logout: 0, whoami: 0, version: 0, list: 0, ls: 0, get: 1, show: 1, search: Infinity, create: 0, new: 0,
+  edit: 1, history: 1, backlinks: 1, tags: 0, graph: 1, export: 0, attach: 2, attachments: 1, download: 2, mcp: 0,
+};
+
 function parseArgs(argv: string[]): { cmd: string; args: string[]; flags: Flags } {
   const flags: Flags = {};
   const args: string[] = [];
-  const booleans = new Set(['json', 'mine', 'no-browser', 'tags', 'raw', 'help', 'default', 'force']);
+  // Before the command, `--version` is the version switch; after it, `get --version n` takes a value.
+  const isBoolean = (key: string) =>
+    BOOLEANS.has(key) || (args.length ? (COMMAND_BOOLEANS[args[0]!] ?? []).includes(key) : key === 'version');
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
     if (a === '--') {
@@ -88,7 +99,7 @@ function parseArgs(argv: string[]): { cmd: string; args: string[]; flags: Flags 
       const eq = a.indexOf('=');
       const key = eq > 0 ? a.slice(2, eq) : a.slice(2);
       if (eq > 0) flags[key] = a.slice(eq + 1);
-      else if (booleans.has(key)) flags[key] = true;
+      else if (isBoolean(key)) flags[key] = true;
       else {
         const v = argv[++i];
         if (v === undefined) throw new CliError(`--${key} needs a value`);
@@ -97,7 +108,13 @@ function parseArgs(argv: string[]): { cmd: string; args: string[]; flags: Flags 
     } else if (a === '-h') flags.help = true;
     else args.push(a);
   }
-  return { cmd: args.shift() ?? 'help', args, flags };
+  const cmd = args.shift() ?? (flags.version === true ? 'version' : 'help');
+  if (flags.version === true && cmd !== 'version') throw new CliError('--version needs a value');
+  const max = MAX_ARGS[cmd];
+  if (max !== undefined && args.length > max) {
+    throw new CliError(`unexpected argument "${args[max]}" for ${cmd}; values with spaces or commas need --flag=value or quotes`);
+  }
+  return { cmd, args, flags };
 }
 
 // ------------------------------------------------------------------ auth
@@ -633,6 +650,7 @@ Setup
   login [--no-browser]                                       sign in (browser, MFA)
   logout                                                     forget stored tokens
   whoami
+  version                                                    print the version (also --version)
 
 Articles
   list [--tag t] [--mine] [--limit n]
@@ -661,7 +679,7 @@ Deleting articles is only possible from the web UI.`;
 async function main() {
   const { cmd, args, flags } = parseArgs(process.argv.slice(2));
   if (flags.help || cmd === 'help') return out(HELP);
-  if (cmd === 'version' || cmd === '--version') return out(VERSION);
+  if (cmd === 'version') return out(VERSION);
   if (cmd === 'configure') {
     const name = flags.env as string;
     const url = (flags.url as string | undefined)?.replace(/\/+$/, '');
