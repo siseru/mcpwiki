@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import {
   Annotations,
-  Arn, CfnOutput, Duration, Fn, Lazy, Names, RemovalPolicy, Stack, type StackProps,
+  Arn, CfnOutput, Duration, Fn, RemovalPolicy, Stack, type StackProps,
   aws_apigatewayv2 as apigw,
   aws_backup as backup,
   aws_apigatewayv2_integrations as integrations,
@@ -326,7 +326,7 @@ export class WikiStack extends Stack {
       `form-action 'self' ${cognitoUrl}`,
       'upgrade-insecure-requests',
     ].join('; ');
-    const headers = new cf.ResponseHeadersPolicy(this, 'SecurityHeaders', {
+    const headers = contentAddressedPolicy(this, 'SecurityHeaders', {
       securityHeadersBehavior: {
         contentSecurityPolicy: { contentSecurityPolicy: csp, override: true },
         strictTransportSecurity: { accessControlMaxAge: Duration.days(365), includeSubdomains: true, preload: false, override: true },
@@ -342,10 +342,9 @@ export class WikiStack extends Stack {
       },
       removeHeaders: ['Server'],
     });
-    nameAfterContent(headers);
     // Extension bundles are only ever loaded as module scripts (the CSP of a script response does not apply to
     // it). Should anything else be served from there, it must not run as a page of the wiki's origin.
-    const extHeaders = extensions.length ? new cf.ResponseHeadersPolicy(this, 'ExtensionHeaders', {
+    const extHeaders = extensions.length ? contentAddressedPolicy(this, 'ExtensionHeaders', {
       securityHeadersBehavior: {
         contentSecurityPolicy: { contentSecurityPolicy: "default-src 'none'; sandbox; frame-ancestors 'none'", override: true },
         strictTransportSecurity: { accessControlMaxAge: Duration.days(365), includeSubdomains: true, preload: false, override: true },
@@ -355,7 +354,6 @@ export class WikiStack extends Stack {
       },
       removeHeaders: ['Server'],
     }) : undefined;
-    if (extHeaders) nameAfterContent(extHeaders);
     const apiOrigin = new origins.HttpOrigin(`${api.apiId}.execute-api.${this.region}.amazonaws.com`, {
       protocolPolicy: cf.OriginProtocolPolicy.HTTPS_ONLY,
       customHeaders: { 'x-origin-verify': originSecret.secretValue.unsafeUnwrap() },
@@ -638,17 +636,12 @@ export class WikiStack extends Stack {
 }
 
 /**
- * Names a response headers policy after its content, so every change is a replacement instead of an in-place
- * update. The dev boundary denies policy updates (CloudFront policies carry no tags, so prod's cannot be told
- * apart; see guard-stack.ts). The hash covers the synthesized config, i.e. references stay references.
+ * A response headers policy whose construct id (so logical id and generated name) carries a hash of its content:
+ * every change creates a new policy and deletes the old one instead of updating it in place. The dev boundary
+ * denies policy updates (CloudFront policies carry no tags, so prod's cannot be told apart; see guard-stack.ts),
+ * and CloudFormation updates a renamed policy in place. References are hashed as references.
  */
-function nameAfterContent(policy: cf.ResponseHeadersPolicy): void {
-  const cfn = policy.node.defaultChild as cf.CfnResponseHeadersPolicy;
-  const prefix = Names.uniqueResourceName(policy, { maxLength: 100 });
-  cfn.addPropertyOverride('ResponseHeadersPolicyConfig.Name', Lazy.string({
-    produce: () => {
-      const { name: _name, ...config } = Stack.of(policy).resolve(cfn.responseHeadersPolicyConfig) as Record<string, unknown>;
-      return `${prefix}-${createHash('sha256').update(JSON.stringify(config)).digest('hex').slice(0, 16)}`;
-    },
-  }));
+function contentAddressedPolicy(scope: Construct, id: string, props: cf.ResponseHeadersPolicyProps): cf.ResponseHeadersPolicy {
+  const hash = createHash('sha256').update(JSON.stringify(Stack.of(scope).resolve(props))).digest('hex').slice(0, 8);
+  return new cf.ResponseHeadersPolicy(scope, `${id}${hash}`, props);
 }

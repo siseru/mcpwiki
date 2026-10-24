@@ -36,6 +36,8 @@ test("the dev boundary lets dev change only its own CloudFront functions, never 
   const deny = boundary().find((s) => s.Sid === 'DenyCloudFrontFunctionsOutsideDev')!;
   assert.equal(deny.Effect, 'Deny');
   for (const a of ['cloudfront:UpdateFunction', 'cloudfront:PublishFunction', 'cloudfront:DeleteFunction']) assert.ok(deny.Action.includes(a), a);
+  // CreateFunction is authorized against `*`, which never matches a function ARN: denying it would block dev.
+  assert.ok(!deny.Action.includes('cloudfront:CreateFunction'));
   const [pattern] = [deny.NotResource].flat() as string[];
   const arn = (name: string) => `arn:aws:cloudfront::${env.account}:function/${name}`;
   const dev = functionNames('dev');

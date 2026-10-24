@@ -149,7 +149,7 @@ The default CDK bootstrap is unsafe when dev and prod share one account. Its exe
    - AssumeRole is allowed only for dev roles and `cdk-mwdev-*`. This blocks escalation through the default bootstrap roles, which trust the account root.
    - Resources that belong to other CloudFormation stacks, or that are tagged `mcpwiki:env=prod`, are denied.
    - prod data (S3, DynamoDB, Lambda, SSM, logs, Backup) and the default CDK asset bucket are also denied by name.
-   - CloudFront functions and policies cannot be tagged, so the tag denies above never match them. Function changes are allowed only for dev's names (`*MCPWikidev*`), and in-place updates of policies (response headers, cache, OAC, ...) are denied outright. The wiki names its response headers policies after their content, so a change is a replacement (create + delete); CloudFront refuses to delete a policy still attached to prod's distribution.
+   - CloudFront functions and policies cannot be tagged, so the tag denies above never match them. Function changes are allowed only for dev's names (`*MCPWikidev*`), and in-place updates of policies (response headers, cache, OAC, ...) are denied outright. The wiki puts a content hash into the logical id of its response headers policies, so a change is a replacement (create + delete; CloudFormation updates a merely renamed policy in place); CloudFront refuses to delete a policy still attached to prod's distribution.
    - Route 53 changes are allowed only for the dev host and names under it. This protects the other sites that share the hosted zone.
 4. **GitHub OIDC trust:**
    - The dev role requires `environment:dev` and `ref:refs/heads/main`, and it can assume only `cdk-mwdev-*`.
@@ -220,7 +220,7 @@ The initial backfill found 12 packages published less than 7 days earlier. They 
 | Medium | TOTP was the only MFA method, which a look-alike login page can phish | Fixed: passkeys, with user verification required, satisfy MFA |
 | Medium | The alarm address appeared, with punctuation dropped, in a public dev deploy log. CDK's `EmailSubscription` builds the logical id from the address, and GitHub masks only the literal value. | Fixed: the run's logs were deleted, ids are fixed, lint and a CI check prevent a repeat, and the punctuation-free form is masked too. prod was not affected. |
 | Low | Test code contained literal bidi control characters | Fixed: replaced with escapes; lint rejects them |
-| Medium | The dev boundary did not cover CloudFront functions and policies (they cannot be tagged), so dev could rewrite prod's viewer-request functions and security headers | Fixed: functions limited to dev's names, policy updates denied, headers policies named after their content |
+| Medium | The dev boundary did not cover CloudFront functions and policies (they cannot be tagged), so dev could rewrite prod's viewer-request functions and security headers | Fixed: functions limited to dev's names, policy updates denied, headers policies replaced by content hash |
 | Medium | Any object in an extension's bucket was served from the wiki's origin and could run scripts without the SRI check | Fixed: only the configured `script` is served, with a sandbox CSP |
 | Low | Re-using an attachment's presigned upload could replace the bytes after the type check | Fixed: reads are pinned to the checked version |
 | Low (accepted) | Some WAF body rules stay in count mode | Article bodies legitimately contain HTML and code samples. Mitigated by sanitized rendering and the CSP. |
