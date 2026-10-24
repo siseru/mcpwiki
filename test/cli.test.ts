@@ -92,6 +92,29 @@ test('CLI commands and MCP stdio bridge', { skip: !existsSync(cliPath) && 'run n
     const edit = await run('edit', 'cli-doc', '--title', 'Renamed');
     assert.equal(edit.code, 0, edit.stderr);
     assert.match(edit.stdout, /version 2/);
+    // #50: `--tags a,b` takes a value (only `graph --tags` is a switch); nothing is dropped silently.
+    const tagged = await run('create', '--title', 'Tagged', '--file', doc, '--id', 'cli-tags', '--tags', 'foo,bar');
+    assert.equal(tagged.code, 0, tagged.stderr);
+    assert.match((await run('get', 'cli-tags')).stdout, /\ntags: \[foo, bar\]\n/);
+    const retag = await run('edit', 'cli-tags', '--tags', 'baz');
+    assert.equal(retag.code, 0, retag.stderr);
+    assert.match((await run('get', 'cli-tags')).stdout, /\ntags: \[baz\]\n/);
+    assert.equal((await run('graph', '--tags')).code, 0);
+    assert.equal((await run('graph', 'cli-tags', '--tags', '--json')).code, 0);
+    const stray = await run('create', '--title', 'Stray', 'leftover');
+    assert.equal(stray.code, 1);
+    assert.match(stray.stderr, /unexpected argument "leftover" for create/);
+    assert.match((await run('get', 'cli-doc', 'extra')).stderr, /unexpected argument "extra" for get/);
+    // #51: `--version` alone prints the version; `get --version n` still takes a value.
+    for (const v of [await run('--version'), await run('version')]) {
+      assert.equal(v.code, 0, v.stderr);
+      assert.equal(v.stdout.trim(), (await run('version')).stdout.trim());
+      assert.ok(v.stdout.trim().length > 0);
+    }
+    assert.match((await run('get', 'cli-doc', '--version', '1')).stdout, /^title: CLI記事$/m);
+    assert.match((await run('get', 'cli-doc', '--version')).stderr, /--version needs a value/);
+    assert.match((await run('--version', 'list')).stderr, /--version needs a value/);
+    assert.match((await run('help')).stdout, /^ {2}version /m);
     // edit via EDITOR: a script that appends a line. On Windows that is a .cmd shim, which the CLI has to
     // start through cmd.exe (Node refuses to spawn .cmd directly since 20.12). It appends by copying a
     // UTF-8 file rather than with `echo`, whose output depends on the console code page.
