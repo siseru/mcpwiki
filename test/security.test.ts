@@ -278,3 +278,20 @@ test('passkey MFA is enabled together with TOTP in one Cognito request (Cognito 
   fail = cognitoError('WebAuthn MFA requires enabling an additional MFA setting.');
   await assert.rejects(dir.enablePasskeyMfa('taro'), /additional MFA setting/, 'anything else stays a server error (and is logged)');
 });
+
+test('attachments: re-using the upload policy after complete cannot replace the checked bytes', async () => {
+  const ctx = setup();
+  await ctx.call(users.alice, 'POST', '/api/articles', { id: 'doc', title: 'D', body: 'x' });
+  const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(100, 1)]);
+  const r = await ctx.call(users.alice, 'POST', '/api/articles/doc/attachments', { name: 'a.png', contentType: 'image/png', size: png.length });
+  const key = r.json.upload.fields.key;
+  ctx.blobs.put(key, png);
+  const done = await ctx.call(users.alice, 'POST', `/api/articles/doc/attachments/${r.json.fileId}/complete`);
+  assert.equal(done.status, 200);
+  // The presigned POST stays valid for its whole lifetime: upload unchecked bytes with the same fields.
+  ctx.blobs.put(key, Buffer.from('<html><script>alert(1)</script>'));
+  const url = await ctx.call(users.bob, 'GET', `/api/articles/doc/attachments/${r.json.fileId}/url`);
+  assert.match(url.json.url, /[?&]versionId=v1(&|$)/, 'downloads are pinned to the checked version');
+  const viaMcp = await ctx.mcp(users.bob, 'tools/call', { name: 'get_attachment', arguments: { id: 'doc', file_id: r.json.fileId } });
+  assert.ok(Buffer.from(viaMcp.result.content[1].data, 'base64').equals(png), 'MCP clients get the checked bytes');
+});

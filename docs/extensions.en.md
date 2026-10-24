@@ -58,7 +58,7 @@ With at least one extension, three things change:
 
 | Where | Change |
 |---|---|
-| CloudFront | A `/ext/<id>/*` behavior that reads the extension's bucket through OAC, GET and HEAD only, with the wiki's security headers |
+| CloudFront | A `/ext/<id>/<script>` behavior (the configured bundle only) that reads the extension's bucket through OAC, GET and HEAD only, with security headers including a `default-src 'none'; sandbox` CSP |
 | CSP | `connectSrc` is appended to `connect-src`. `script-src 'self'` is unchanged |
 | `config.json` | `extensions: [{ id, contract, src, integrity }]`. The bucket and endpoints are not sent to the browser |
 

@@ -58,7 +58,7 @@
 
 | 対象 | 変更 |
 |---|---|
-| CloudFront | 挙動 `/ext/<id>/*` を足します。拡張のバケットを OAC で読み、GET と HEAD だけを受け付け、Wiki と同じセキュリティヘッダを付けます |
+| CloudFront | 挙動 `/ext/<id>/<script>` を足します（設定したバンドルの 1 ファイルだけ）。拡張のバケットを OAC で読み、GET と HEAD だけを受け付け、`default-src 'none'; sandbox` の CSP などのセキュリティヘッダを付けます |
 | CSP | `connect-src` に `connectSrc` を足します。`script-src 'self'` は変えません |
 | `config.json` | `extensions: [{ id, contract, src, integrity }]` を足します。バケットや接続先は、ブラウザに渡しません |
 

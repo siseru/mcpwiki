@@ -200,5 +200,7 @@ export interface Attachment {
   uploadedBy: string; // username
   uploadedBySub: string;
   uploadedAt: string;
+  /** Object version checked by complete(); reads are pinned to it (the upload policy stays usable until it expires). */
+  versionId?: string;
   deleted?: boolean;
 }

@@ -150,23 +150,26 @@ export class MemoryStore implements Store {
 /** In-memory object storage for tests: "uploads" are simulated with put(). */
 export class MemoryBlobs implements AttachmentBlobs {
   objects = new Map<string, Buffer>();
+  /** Every version written per key, like a versioned bucket (version ids are `v1`, `v2`, ...). */
+  versions = new Map<string, Buffer[]>();
   /** Base URL of a fake object store (tests point this at a local server). */
   constructor(public baseUrl = 'https://blobs.test') {}
   async put(key: string, data: Buffer, _contentType?: string) {
     this.objects.set(key, data);
+    this.versions.set(key, [...(this.versions.get(key) ?? []), data]);
   }
   presignUpload(key: string, contentType: string, maxBytes: number) {
     return { url: `${this.baseUrl}/`, fields: { key, 'Content-Type': contentType, maxBytes: String(maxBytes) } };
   }
-  presignDownload(key: string, contentType: string, disposition: string) {
-    return `${this.baseUrl}/${key}?type=${encodeURIComponent(contentType)}&disposition=${encodeURIComponent(disposition)}`;
+  presignDownload(key: string, contentType: string, disposition: string, versionId?: string) {
+    return `${this.baseUrl}/${key}?type=${encodeURIComponent(contentType)}&disposition=${encodeURIComponent(disposition)}${versionId ? `&versionId=${versionId}` : ''}`;
   }
   async head(key: string, bytes: number) {
     const o = this.objects.get(key);
-    return o ? { size: o.length, head: o.subarray(0, bytes) } : null;
+    return o ? { size: o.length, head: o.subarray(0, bytes), versionId: `v${this.versions.get(key)!.length}` } : null;
   }
-  async read(key: string, maxBytes: number) {
-    const o = this.objects.get(key);
+  async read(key: string, maxBytes: number, versionId?: string) {
+    const o = versionId ? this.versions.get(key)?.[Number(versionId.slice(1)) - 1] : this.objects.get(key);
     if (!o) throw new Error('no such object');
     if (o.length > maxBytes) throw new Error('object too large');
     return o;

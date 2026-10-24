@@ -56,10 +56,10 @@ export interface Store {
 /** Attachment bytes live in object storage; uploads/downloads go directly between client and storage. */
 export interface AttachmentBlobs {
   presignUpload(key: string, contentType: string, maxBytes: number): { url: string; fields: Record<string, string> };
-  presignDownload(key: string, contentType: string, disposition: string): string;
-  /** Size and first bytes of an uploaded object, or null if it does not exist. */
-  head(key: string, bytes: number): Promise<{ size: number; head: Buffer } | null>;
-  read(key: string, maxBytes: number): Promise<Buffer>;
+  presignDownload(key: string, contentType: string, disposition: string, versionId?: string): string;
+  /** Size, first bytes and version of an uploaded object, or null if it does not exist. */
+  head(key: string, bytes: number): Promise<{ size: number; head: Buffer; versionId?: string } | null>;
+  read(key: string, maxBytes: number, versionId?: string): Promise<Buffer>;
   /** Server-side write (admin exports). */
   put(key: string, data: Buffer, contentType: string): Promise<void>;
   remove(key: string): Promise<void>;
