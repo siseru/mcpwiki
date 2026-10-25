@@ -50,6 +50,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
+          check-latest: true # the runner image caches an older 24.x (security releases lag behind)
           package-manager-cache: false # no shared cache in the release path (cache poisoning)
       - run: npm ci --ignore-scripts
       - run: npm test
@@ -103,6 +104,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
+          check-latest: true # the runner image caches an older 24.x (security releases lag behind)
           package-manager-cache: false # no shared cache in the release path (cache poisoning)
       # Only tools/deploy (aws-cdk CLI, no dependencies) is installed where AWS credentials exist.
       - run: npm ci --ignore-scripts --prefix tools/deploy
