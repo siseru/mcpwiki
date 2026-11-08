@@ -176,7 +176,10 @@ test('list cursor is opaque and tamper-proof', async () => {
   for (let i = 0; i < 3; i++) await call(users.alice, 'POST', '/api/articles', { id: `c${i}`, title: `C${i}`, body: '' });
   const r = (await call(users.bob, 'GET', '/api/articles?limit=1')).json;
   assert.ok(r.cursor);
-  assert.doesNotMatch(Buffer.from(r.cursor, 'base64url').toString('latin1'), /c\d|20\d\d-/);
+  // The cursor is ciphertext (random-looking bytes), so look for the plaintext `<updatedAt>#<id>` itself: a short
+  // pattern such as /c\d/ also matches random bytes now and then (about 1% of runs).
+  const raw = Buffer.from(r.cursor, 'base64url').toString('latin1');
+  assert.doesNotMatch(raw, /#c\d|\d{4}-\d\d-\d\dT\d\d:\d\d/);
   const forged = Buffer.from('2999-01-01T00:00:00.000Z#c0').toString('base64url');
   assert.equal((await call(users.bob, 'GET', `/api/articles?cursor=${forged}`)).status, 400);
 });
