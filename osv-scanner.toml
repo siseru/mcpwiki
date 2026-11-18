@@ -5,5 +5,13 @@
 # id = "GHSA-xxxx-xxxx-xxxx"
 # ignoreUntil = 2026-12-31T00:00:00Z
 # reason = "why it does not apply, and when to re-check"
-#
-# None at the moment (the brace-expansion exceptions ended with aws-cdk-lib 2.273.0, which bundles 5.0.12).
+
+# minimatch 10.2.6 is bundled *inside* the aws-cdk-lib tarball (bundleDependencies), so it cannot be upgraded
+# or overridden from this repository; aws-cdk-lib 2.277.0 (latest) still depends on ^10.2.6 and the fix is a
+# major (11.0.1). It is build-time only (CDK asset exclude globs from this repository's own code) and never
+# sees external input, so the attacker-controlled pattern amplification does not apply.
+# Re-check when aws-cdk-lib ships minimatch >= 11.0.1.
+[[IgnoredVulns]]
+id = "GHSA-g3hv-75wg-m249"
+ignoreUntil = 2026-12-31T00:00:00Z
+reason = "minimatch bundled in aws-cdk-lib; build-time only, no external input; no upstream fix yet"
