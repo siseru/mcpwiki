@@ -79,10 +79,11 @@ function synth(extensions: ExtensionConfig[] | undefined) {
   const assembly = app.synth();
   const template = readFileSync(join(assembly.directory, assembly.getStackByName(stack.stackName).templateFile), 'utf8');
   // Source.jsonData stages config.json as a file asset of its own.
-  // Values only known at deploy time are staged as unquoted <<marker:...>> placeholders.
+  // Values only known at deploy time are staged as <<marker:...>> placeholders: unquoted in the value position
+  // up to aws-cdk-lib 2.275, inside the JSON string (substituted with jsonEscape) from 2.276. Quote only the former.
   const configs = files(assembly.directory)
     .filter((f) => f.endsWith('config.json'))
-    .map((f) => JSON.parse(readFileSync(f, 'utf8').replace(/<<marker:[^>]+>>/g, (m) => JSON.stringify(m))));
+    .map((f) => JSON.parse(readFileSync(f, 'utf8').replace(/(?<=[:[,]\s*)<<marker:[^>]+>>/g, (m) => JSON.stringify(m))));
   assert.equal(configs.length, 1);
   return { template, resources: JSON.parse(template).Resources as Record<string, { Type: string; Properties: any }>, config: configs[0] };
 }
