@@ -28,7 +28,7 @@
   },
   "dependencies": {
     "dompurify": "3.4.17",
-    "marked": "18.2.0"
+    "marked": "18.2.1"
   },
   "devDependencies": {
     "@aws-sdk/client-cognito-identity-provider": "^3.1167.0",
